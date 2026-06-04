@@ -78,6 +78,23 @@ test('CDP_BROWSER=lightpanda resolves CDP_LIGHTPANDA_WS_URL directly after produ
   });
 });
 
+test('CDP_BROWSER=lightpanda open uses Target.createTarget instead of /json/new', async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), 'cdp-lightpanda-open-target-'));
+
+  await createFakeLightpandaCDPServer().using(async (server) => {
+    const result = await runLightpandaOpen(tempDir, 'https://lightpanda-open.test/', {
+      CDP_LIGHTPANDA_URL: server.httpUrl,
+    });
+
+    assert.equal(result.code, 0, result.stderr);
+    assert.match(result.stdout, /Opened new tab:/);
+    assertVersionRequests(server);
+    assert.deepEqual(commandMethods(server), ['Target.createTarget', 'Target.getTargets']);
+    assert.equal(requestUrls(server).includes('/json/new'), false, 'open must not use /json/new');
+    assert.equal(server.targets.some(target => target.url === 'https://lightpanda-open.test/'), true);
+  });
+});
+
 test('CDP_LIGHTPANDA_WS_URL takes precedence over URL and host/port', async () => {
   const tempDir = await mkdtemp(join(tmpdir(), 'cdp-lightpanda-ws-precedence-'));
 
@@ -244,6 +261,10 @@ async function primaryBrowserSource(tempDir) {
 
 function runLightpandaList(tempDir, env) {
   return runCdp(['list'], { tempDir, env: { CDP_BROWSER: 'lightpanda', ...env } });
+}
+
+function runLightpandaOpen(tempDir, url, env) {
+  return runCdp(['open', url], { tempDir, env: { CDP_BROWSER: 'lightpanda', ...env } });
 }
 
 function runCdp(args, { tempDir, env: overrides = {} }) {
