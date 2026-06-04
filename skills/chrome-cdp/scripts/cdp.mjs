@@ -39,6 +39,10 @@ const FALLBACK_BROWSER_VALUES = Object.freeze(['chrome', 'chromium', 'brave', 'e
 const FALLBACK_BROWSER_IDS = new Set(FALLBACK_BROWSER_VALUES);
 const DEFAULT_FALLBACK_BROWSER_ID = 'chrome';
 const DISABLED_FALLBACK_BROWSER_SUGGESTION = 'none';
+const LIGHTPANDA_FALLBACK_STATE_WARNING = [
+  'Fallback browser is not the same state:',
+  'it may lack cookies, login, local storage (localStorage), DOM mutations, typed text, JS heap, or current user workflow.',
+].join(' ');
 const SUPPORTED_CDP_BROWSER_VALUES = [...CHROME_FAMILY_BROWSER_IDS, 'lightpanda'].join(', ');
 const CHROME_FAMILY_PROFILE_ORDER = {
   mac: ['chrome', 'chromium', 'brave', 'edge'],
@@ -1302,7 +1306,7 @@ function formatLightpandaFallbackPrompt({ cmd, targetPrefix, targetId, page, res
   lines.push(
     '',
     'Lightpanda does not support this operation. chrome-cdp did not run fallback automatically.',
-    'Fallback browser is not the same state: it may lack cookies, login, local storage (localStorage), DOM mutations, typed text, JS heap, or current user workflow.',
+    LIGHTPANDA_FALLBACK_STATE_WARNING,
     '',
     `Ask the user before fallback execution. If approved, enable remote debugging in the fallback browser, run cdp list/open there, then rerun this command with CDP_BROWSER=${nextBrowser}.`,
   );
