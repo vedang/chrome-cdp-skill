@@ -45,22 +45,8 @@ test('unsupported Lightpanda page command emits fallback approval prompt without
     assert.match(list.stdout, /Unsupported Shot Page/);
 
     const shot = await runCdp(['shot', targetId], { tempDir, env });
-    assert.notEqual(shot.code, 0);
-    assert.equal(shot.stdout, '');
-    assert.match(shot.stderr, /LIGHTPANDA_UNSUPPORTED_FALLBACK_REQUIRED/);
-    assert.match(shot.stderr, /Command: shot/);
-    assert.match(shot.stderr, /Normalized command: screenshot/);
-    assert.match(shot.stderr, /Target: lightshot-target-0001/);
-    assert.match(shot.stderr, /Failed CDP method: Page\.captureScreenshot \(-32601 Method not found\)/);
-    assert.match(shot.stderr, /Primary URL: https:\/\/lightpanda-shot\.test\/workflow/);
-    assert.match(shot.stderr, /Suggested fallback browser: brave/);
-    assert.match(shot.stderr, /did not run fallback automatically/);
-    assert.match(shot.stderr, /cookies, login, localStorage, DOM mutations, typed text, JS heap, or in-page workflow may differ/);
-    assert.match(shot.stderr, /Ask the user before fallback execution/);
-
-    assert.equal(fallback.requestLog.length, 0, 'fallback /json endpoints must not be requested');
-    assert.equal(fallback.connectionLog.length, 0, 'fallback WebSocket must not be opened');
-    assert.equal(fallback.commandLog.length, 0, 'fallback CDP commands must not run');
+    assertFallbackPrompt(shot);
+    assertFallbackUntouched(fallback);
   } finally {
     await runCdp(['stop', targetId], {
       tempDir,
@@ -77,6 +63,27 @@ function fakePage(targetId, title, url) {
 
 function shortTmpRoot() {
   return process.platform === 'win32' ? tmpdir() : '/tmp';
+}
+
+function assertFallbackPrompt(result) {
+  assert.notEqual(result.code, 0);
+  assert.equal(result.stdout, '');
+  assert.match(result.stderr, /LIGHTPANDA_UNSUPPORTED_FALLBACK_REQUIRED/);
+  assert.match(result.stderr, /Command: shot/);
+  assert.match(result.stderr, /Normalized command: screenshot/);
+  assert.match(result.stderr, /Target: lightshot-target-0001/);
+  assert.match(result.stderr, /Failed CDP method: Page\.captureScreenshot \(-32601 Method not found\)/);
+  assert.match(result.stderr, /Primary URL: https:\/\/lightpanda-shot\.test\/workflow/);
+  assert.match(result.stderr, /Suggested fallback browser: brave/);
+  assert.match(result.stderr, /did not run fallback automatically/);
+  assert.match(result.stderr, /cookies, login, localStorage, DOM mutations, typed text, JS heap, or in-page workflow may differ/);
+  assert.match(result.stderr, /Ask the user before fallback execution/);
+}
+
+function assertFallbackUntouched(server) {
+  assert.equal(server.requestLog.length, 0, 'fallback /json endpoints must not be requested');
+  assert.equal(server.connectionLog.length, 0, 'fallback WebSocket must not be opened');
+  assert.equal(server.commandLog.length, 0, 'fallback CDP commands must not run');
 }
 
 function runCdp(args, { tempDir, env: overrides = {} }) {

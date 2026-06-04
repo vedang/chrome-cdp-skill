@@ -201,8 +201,7 @@ class CDP {
       this.#ws.onmessage = (ev) => {
         const msg = JSON.parse(ev.data);
         if (msg.id && this.#pending.has(msg.id)) {
-          const pending = this.#pending.get(msg.id);
-          const { resolve, reject, method, sessionId } = pending;
+          const { resolve, reject, method, sessionId } = this.#pending.get(msg.id);
           this.#pending.delete(msg.id);
           if (msg.error) reject(new CDPError(method, msg.error, sessionId));
           else resolve(msg.result);
@@ -294,6 +293,17 @@ function formatErrorData(data) {
   if (typeof data === 'string') return data;
   try { return JSON.stringify(data); }
   catch { return String(data); }
+}
+
+function commandErrorResponse(error) {
+  const response = { ok: false, error: error.message };
+  if (error instanceof CDPError) {
+    response.errorCode = error.code;
+    response.errorMethod = error.method;
+    response.errorData = error.data;
+  }
+  if (isUnsupportedCdpError(error)) response.unsupportedMethod = error.method;
+  return response;
 }
 
 // ---------------------------------------------------------------------------
@@ -659,14 +669,7 @@ async function runDaemon(targetId) {
       }
       return { ok: true, result: result ?? '' };
     } catch (e) {
-      const response = { ok: false, error: e.message };
-      if (e instanceof CDPError) {
-        response.errorCode = e.code;
-        response.errorMethod = e.method;
-        response.errorData = e.data;
-      }
-      if (isUnsupportedCdpError(e)) response.unsupportedMethod = e.method;
-      return response;
+      return commandErrorResponse(e);
     }
   }
 
@@ -880,17 +883,17 @@ const NEEDS_TARGET = new Set([
   'net','network','click','clickxy','type','loadall','evalraw',
 ]);
 
-const COMMAND_CANONICAL_NAMES = new Map([
-  ['ls', 'list'], ['list', 'list'],
-  ['snap', 'snapshot'], ['snapshot', 'snapshot'],
-  ['shot', 'screenshot'], ['screenshot', 'screenshot'],
-  ['nav', 'navigate'], ['navigate', 'navigate'],
-  ['net', 'network'], ['network', 'network'],
+const COMMAND_ALIASES = new Map([
+  ['ls', 'list'],
+  ['snap', 'snapshot'],
+  ['shot', 'screenshot'],
+  ['nav', 'navigate'],
+  ['net', 'network'],
 ]);
 const FALLBACK_BROWSER_IDS = new Set(['chrome', 'chromium', 'brave', 'edge', 'vivaldi']);
 
 function canonicalCommandName(cmd) {
-  return COMMAND_CANONICAL_NAMES.get(cmd) || cmd;
+  return COMMAND_ALIASES.get(cmd) || cmd;
 }
 
 function isLightpandaPrimaryBrowser() {
