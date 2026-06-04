@@ -17,6 +17,17 @@ const CDP_CLI = join(REPO_ROOT, 'skills/chrome-cdp/scripts/cdp.mjs');
 const UNSUPPORTED_SHOT_METHOD = 'Page.captureScreenshot';
 const SCREENSHOT_CDP_METHODS_TEXT = 'Page.getLayoutMetrics, Emulation.getDeviceMetricsOverride, Runtime.enable, Runtime.evaluate, Page.captureScreenshot';
 const STATE_DIVERGENCE_WARNING = 'Fallback browser is not the same state: it may lack cookies, login, local storage (localStorage), DOM mutations, typed text, JS heap, or current user workflow.';
+function manualFallbackSequence(browserId) {
+  const nextBrowser = browserId || '<approved fallback browser>';
+  return [
+    'Manual fallback only:',
+    '1. Ask the user before fallback execution.',
+    '2. If approved, enable remote debugging in the fallback browser.',
+    `3. Run CDP_BROWSER=${nextBrowser} scripts/cdp.mjs list or open in that browser.`,
+    '4. Select the fallback browser target; do not reuse the Lightpanda target id.',
+    `5. Rerun this command with CDP_BROWSER=${nextBrowser} against the approved fallback target.`,
+  ];
+}
 
 test('unsupported Lightpanda page command emits fallback approval prompt without contacting fallback browser', async () => {
   const tempDir = await mkdtemp(join(shortTmpRoot(), 'cdp-lp-fallback-'));
@@ -78,6 +89,29 @@ test('unsupported Lightpanda exits before resolving configured fallback browser'
     const shot = await runCdp(['shot', targetId], { tempDir, env });
     assertFallbackPrompt(shot, { targetId, primaryUrl, suggestedFallback: 'chrome' });
     assertNoFallbackResolverError(shot);
+  } finally {
+    await stopLightpandaDaemon(tempDir, targetId, lightpanda);
+    await lightpanda.stop();
+  }
+});
+
+test('unsupported Lightpanda fallback prompt suppresses fallback suggestion when configured none', async () => {
+  const tempDir = await mkdtemp(join(shortTmpRoot(), 'cdp-lp-none-'));
+  const targetId = 'lp-none-0001';
+  const primaryUrl = 'https://lightpanda-none.test/workflow';
+
+  const lightpanda = await createFakeLightpandaCDPServer({
+    targets: [fakePage(targetId, 'No Suggested Fallback Page', primaryUrl)],
+    unsupportedMethods: [UNSUPPORTED_SHOT_METHOD],
+  }).start();
+
+  try {
+    const env = { ...makeLightpandaEnv(lightpanda), CDP_FALLBACK_BROWSER: 'none' };
+    await assertLightpandaPageListed(tempDir, env, /No Suggested Fallback Page/);
+
+    const shot = await runCdp(['shot', targetId], { tempDir, env });
+    assertFallbackPrompt(shot, { targetId, primaryUrl, suggestedFallback: null });
+    assert.doesNotMatch(shot.stderr, /^Suggested fallback browser:/m);
   } finally {
     await stopLightpandaDaemon(tempDir, targetId, lightpanda);
     await lightpanda.stop();
@@ -160,12 +194,12 @@ function assertFallbackPrompt(result, { commandTarget, targetId, primaryUrl, sug
     'Failed CDP method: Page.captureScreenshot (-32601 Method not found)',
     `Command CDP methods: ${SCREENSHOT_CDP_METHODS_TEXT}`,
     `Primary URL: ${primaryUrl}`,
-    `Suggested fallback browser: ${suggestedFallback}`,
+    ...(suggestedFallback ? [`Suggested fallback browser: ${suggestedFallback}`] : []),
     STATE_DIVERGENCE_WARNING,
+    ...manualFallbackSequence(suggestedFallback),
   ]);
 
   assert.match(result.stderr, /did not run fallback automatically/);
-  assert.match(result.stderr, /Ask the user before fallback execution/);
 }
 
 function assertPromptLines(stderr, requiredLines) {

@@ -12,10 +12,13 @@ Lightweight Chrome DevTools Protocol CLI. Connects directly via WebSocket — no
 - Chrome (or Chromium, Brave, Edge, Vivaldi) with remote debugging enabled: open `chrome://inspect/#remote-debugging` and toggle the switch
 - Node.js 22+ (uses built-in WebSocket)
 - If your browser's `DevToolsActivePort` is in a non-standard location, set `CDP_PORT_FILE` to its full path
+- Optional Lightpanda backend: start `lightpanda serve --host 127.0.0.1 --port 9222` yourself, then run commands with `CDP_BROWSER=lightpanda`. Lightpanda support is attach-only; this skill does not launch it.
 
 ## Commands
 
 All commands use `scripts/cdp.mjs`. The `<target>` is a **unique** targetId prefix from `list`; copy the full prefix shown in the `list` output (for example `6BE827FA`). The CLI rejects ambiguous prefixes.
+
+Chrome-family browsers are the default. Use `CDP_BROWSER=chrome|chromium|brave|edge|vivaldi` to pin one, or `CDP_BROWSER=lightpanda` to attach to Lightpanda. Lightpanda endpoint env vars are `CDP_LIGHTPANDA_WS_URL`, `CDP_LIGHTPANDA_URL`, or `CDP_LIGHTPANDA_HOST` plus `CDP_LIGHTPANDA_PORT`.
 
 ### List open pages
 
@@ -69,6 +72,22 @@ CSS px = screenshot image px / DPR
 ```
 
 `shot` prints the DPR for the current page. Typical Retina (DPR=2): divide screenshot coords by 2.
+
+## Lightpanda fallback approval
+
+[tag:lightpanda_fallback_consent] If a Lightpanda command prints `LIGHTPANDA_UNSUPPORTED_FALLBACK_REQUIRED`, stop. Do **not** run a fallback command automatically. Do **not** connect to a fallback browser, clone the URL, reuse the Lightpanda target id, create a sticky target mapping, or retry in Chrome/Brave/etc. without explicit user approval.
+
+Explain that the fallback browser is separate state and may lack cookies, login, localStorage, DOM mutations, typed text, JS heap, and current workflow state. Ask the user whether they want to continue in a fallback browser.
+
+If the user approves fallback execution:
+
+1. Use only the approved browser with explicit `CDP_BROWSER=<approved browser>`.
+2. Enable remote debugging in that fallback browser if needed.
+3. Run `CDP_BROWSER=<approved browser> scripts/cdp.mjs list` or `open` in that backend.
+4. Select the target from the fallback browser list; do not reuse the Lightpanda target id.
+5. Rerun the requested command against that approved fallback target.
+
+`CDP_FALLBACK_BROWSER=chrome|chromium|brave|edge|vivaldi|none` changes prompt text only. It is not permission to execute fallback.
 
 ## Tips
 

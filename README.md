@@ -30,6 +30,41 @@ Navigate to `chrome://inspect/#remote-debugging` and toggle the switch. That's i
 
 The CLI auto-detects Chrome, Chromium, Brave, Edge, and Vivaldi on macOS, Linux, and Windows. If your browser stores `DevToolsActivePort` in a non-standard location, set the `CDP_PORT_FILE` environment variable to the full path.
 
+Chrome-family auto-detection remains the default. Set `CDP_BROWSER=chrome|chromium|brave|edge|vivaldi` only when you want to pin a specific browser.
+
+### Optional: use Lightpanda as the primary backend
+
+Lightpanda support is opt-in and attach-only. `chrome-cdp` does not start Lightpanda for you; start it yourself first:
+
+```bash
+lightpanda serve --host 127.0.0.1 --port 9222
+CDP_BROWSER=lightpanda scripts/cdp.mjs list
+```
+
+Lightpanda endpoint selection uses this precedence:
+
+1. `CDP_LIGHTPANDA_WS_URL=ws://...`
+2. `CDP_LIGHTPANDA_URL=http://127.0.0.1:9222`
+3. `CDP_LIGHTPANDA_HOST=127.0.0.1` plus `CDP_LIGHTPANDA_PORT=9222`
+
+`chrome-cdp` validates that `/json/version` reports `Browser` or `User-Agent` beginning with `Lightpanda/`. Use `CDP_LIGHTPANDA_ALLOW_NON_LIGHTPANDA=1` only for deliberate test/proxy setups.
+
+### Lightpanda unsupported operations and fallback approval
+
+[tag:lightpanda_fallback_consent] If Lightpanda reports an unsupported CDP method, `chrome-cdp` stops and prints `LIGHTPANDA_UNSUPPORTED_FALLBACK_REQUIRED`. It does not launch, connect to, clone into, map targets to, or run commands in a fallback browser automatically.
+
+Fallback browser configuration is suggestion-only:
+
+```bash
+CDP_FALLBACK_BROWSER=chrome|chromium|brave|edge|vivaldi|none
+CDP_FALLBACK_PORT_FILE=/path/to/fallback/DevToolsActivePort
+CDP_FALLBACK_HOST=127.0.0.1
+```
+
+For example, `CDP_FALLBACK_BROWSER=brave` changes the prompt to suggest Brave; it does not contact Brave. `CDP_FALLBACK_BROWSER=none` suppresses the browser suggestion.
+
+A fallback browser has separate state. It may lack cookies, login, localStorage, DOM mutations, typed text, JS heap, and current workflow state. If fallback is approved by the user, enable remote debugging in the chosen fallback browser, run `CDP_BROWSER=<browser> scripts/cdp.mjs list` or `open` in that browser, select a target from that fallback list, then rerun the original command with `CDP_BROWSER=<browser>` against that approved fallback target.
+
 ## Usage
 
 ```bash
