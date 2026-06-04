@@ -30,6 +30,7 @@ const RUNTIME_DIR = IS_WINDOWS
 try { mkdirSync(RUNTIME_DIR, { recursive: true, mode: 0o700 }); } catch {}
 const PAGES_CACHE = resolve(RUNTIME_DIR, 'pages.json');
 const CHROME_FAMILY_BROWSER_IDS = new Set(['auto', 'chrome', 'chromium', 'brave', 'edge', 'vivaldi']);
+const SUPPORTED_CDP_BROWSER_VALUES = [...CHROME_FAMILY_BROWSER_IDS, 'lightpanda'].join(', ');
 const CHROME_FAMILY_PROFILE_ORDER = {
   mac: ['chrome', 'chromium', 'brave', 'edge'],
   linux: ['chrome', 'chromium', 'vivaldi', 'brave', 'edge'],
@@ -89,21 +90,13 @@ function socketPathsForPage(page) {
 
 async function getBrowserDescriptor() {
   const browserId = primaryBrowserId();
-  if (browserId === 'lightpanda') {
-    return resolveLightpandaBrowserDescriptor();
-  }
-  if (CHROME_FAMILY_BROWSER_IDS.has(browserId)) {
-    return resolveChromeFamilyBrowserDescriptor(browserId);
-  }
-  throw new Error(`Unsupported CDP_BROWSER: ${process.env.CDP_BROWSER}. Expected auto, chrome, chromium, brave, edge, vivaldi, or lightpanda.`);
+  if (browserId === 'lightpanda') return resolveLightpandaBrowserDescriptor();
+  if (CHROME_FAMILY_BROWSER_IDS.has(browserId)) return resolveChromeFamilyBrowser(browserId, 'primary');
+  throw new Error(`Unsupported CDP_BROWSER: ${process.env.CDP_BROWSER}. Expected ${SUPPORTED_CDP_BROWSER_VALUES}.`);
 }
 
 function primaryBrowserId() {
   return String(process.env.CDP_BROWSER || 'auto').trim().toLowerCase() || 'auto';
-}
-
-function resolveChromeFamilyBrowserDescriptor(browserId = 'auto') {
-  return resolveChromeFamilyBrowser(browserId, 'primary');
 }
 
 function resolveChromeFamilyBrowser(browserId = 'auto', role = 'primary') {
