@@ -7,6 +7,7 @@
 // the CDP session open. Chrome's "Allow debugging" modal fires once per
 // daemon (= once per tab). Daemons auto-exit after 20min idle.
 
+import { createHash } from 'crypto';
 import { readFileSync, writeFileSync, unlinkSync, existsSync, mkdirSync } from 'fs';
 import { homedir } from 'os';
 import { resolve } from 'path';
@@ -29,17 +30,80 @@ const RUNTIME_DIR = IS_WINDOWS
 try { mkdirSync(RUNTIME_DIR, { recursive: true, mode: 0o700 }); } catch {}
 const PAGES_CACHE = resolve(RUNTIME_DIR, 'pages.json');
 
-function sockPath(targetId) {
+function safeSocketPart(value) {
+  return String(value || 'unknown').replace(/[^A-Za-z0-9_.-]/g, '_');
+}
+
+function legacySockPath(targetId) {
+  const safeTargetId = safeSocketPart(targetId);
   return IS_WINDOWS
-    ? `\\\\.\\pipe\\cdp-${targetId}`
-    : resolve(RUNTIME_DIR, `cdp-${targetId}.sock`);
+    ? `\\\\.\\pipe\\cdp-${safeTargetId}`
+    : resolve(RUNTIME_DIR, `cdp-${safeTargetId}.sock`);
+}
+
+function sockPath(browserKey, targetId) {
+  const safeBrowserKey = safeSocketPart(browserKey);
+  const safeTargetId = safeSocketPart(targetId);
+  return IS_WINDOWS
+    ? `\\\\.\\pipe\\cdp-${safeBrowserKey}-${safeTargetId}`
+    : resolve(RUNTIME_DIR, `cdp-${safeBrowserKey}-${safeTargetId}.sock`);
+}
+
+function socketPathsForPage(page) {
+  return [...new Set([sockPath(page.browserKey, page.targetId), legacySockPath(page.targetId)])];
 }
 
 async function getWsUrl() {
+  return (await getBrowserDescriptor()).wsUrl;
+}
+
+async function getBrowserDescriptor() {
   if ((process.env.CDP_BROWSER || '').toLowerCase() === 'lightpanda') {
-    return resolveLightpandaWsUrl();
+    return resolveLightpandaBrowserDescriptor();
   }
-  return getChromeFamilyWsUrl();
+  return resolveChromeFamilyBrowserDescriptor();
+}
+
+function resolveChromeFamilyBrowserDescriptor() {
+  return makeBrowserDescriptor({
+    browserId: 'chrome',
+    browserKind: 'chrome-family',
+    wsUrl: getChromeFamilyWsUrl(),
+    source: process.env.CDP_PORT_FILE ? 'CDP_PORT_FILE' : 'DevToolsActivePort',
+  });
+}
+
+async function resolveLightpandaBrowserDescriptor() {
+  return makeBrowserDescriptor({
+    browserId: 'lightpanda',
+    browserKind: 'lightpanda',
+    wsUrl: await resolveLightpandaWsUrl(),
+    source: lightpandaSourceDescription(),
+  });
+}
+
+function lightpandaSourceDescription() {
+  if (process.env.CDP_LIGHTPANDA_WS_URL) return 'CDP_LIGHTPANDA_WS_URL';
+  if (process.env.CDP_LIGHTPANDA_URL) return 'CDP_LIGHTPANDA_URL';
+  return 'CDP_LIGHTPANDA_HOST/CDP_LIGHTPANDA_PORT';
+}
+
+function makeBrowserDescriptor(descriptor) {
+  const normalized = {
+    browserId: descriptor.browserId,
+    browserKind: descriptor.browserKind,
+    wsUrl: descriptor.wsUrl,
+    source: descriptor.source,
+  };
+  return { browserKey: stableBrowserKey(normalized), ...normalized };
+}
+
+function stableBrowserKey({ browserId, browserKind, wsUrl }) {
+  const digest = createHash('sha256')
+    .update([browserKind, browserId, wsUrl].join('\0'))
+    .digest('hex')
+    .slice(0, 12);
+  return `${browserId}-${digest}`;
 }
 
 function getChromeFamilyWsUrl() {
@@ -172,6 +236,127 @@ function getDisplayPrefixLength(targetIds) {
     if (prefixes.size === targetIds.length) return len;
   }
   return maxLen;
+}
+
+function cacheBrowserDescriptor(descriptor) {
+  return {
+    browserId: descriptor.browserId,
+    browserKind: descriptor.browserKind,
+    wsUrl: descriptor.wsUrl,
+    source: descriptor.source,
+  };
+}
+
+function cachePageRecord(page, descriptor) {
+  return {
+    browserKey: page.browserKey || descriptor.browserKey,
+    browserId: page.browserId || descriptor.browserId,
+    browserKind: page.browserKind || descriptor.browserKind,
+    targetId: page.targetId,
+    title: page.title || '',
+    url: page.url || '',
+  };
+}
+
+function makePagesCache(descriptor, pages) {
+  return {
+    version: 2,
+    primaryBrowserKey: descriptor.browserKey,
+    browsers: { [descriptor.browserKey]: cacheBrowserDescriptor(descriptor) },
+    pages: pages.map(page => cachePageRecord(page, descriptor)),
+  };
+}
+
+function writePagesCache(descriptor, pages) {
+  writePagesCacheObject(makePagesCache(descriptor, pages));
+}
+
+function writePagesCacheObject(cache) {
+  writeFileSync(PAGES_CACHE, JSON.stringify(cache), { mode: 0o600 });
+}
+
+function readRawPagesCache() {
+  return JSON.parse(readFileSync(PAGES_CACHE, 'utf8'));
+}
+
+function legacyBrowserDescriptor() {
+  return {
+    browserKey: 'legacy',
+    browserId: 'chrome',
+    browserKind: 'chrome-family',
+    wsUrl: '',
+    source: 'legacy-pages-cache',
+  };
+}
+
+function normalizePagesCache(raw, currentDescriptor) {
+  if (Array.isArray(raw)) {
+    if (!currentDescriptor) throw new Error('Old pages cache requires current browser. Run "cdp list" again.');
+    return makePagesCache(currentDescriptor, raw);
+  }
+  if (!raw || typeof raw !== 'object') throw new Error('Invalid pages cache. Run "cdp list" again.');
+
+  const browsers = (raw.browsers && typeof raw.browsers === 'object') ? { ...raw.browsers } : {};
+  if (currentDescriptor && !browsers[currentDescriptor.browserKey]) {
+    browsers[currentDescriptor.browserKey] = cacheBrowserDescriptor(currentDescriptor);
+  }
+  const primaryBrowserKey = raw.primaryBrowserKey || currentDescriptor?.browserKey || Object.keys(browsers)[0];
+  const pages = Array.isArray(raw.pages) ? raw.pages : [];
+  const normalizedPages = pages.map(page => {
+    const browserKey = page.browserKey || primaryBrowserKey || currentDescriptor?.browserKey;
+    const browser = browsers[browserKey] || (currentDescriptor?.browserKey === browserKey ? currentDescriptor : {}) || {};
+    return {
+      browserKey,
+      browserId: page.browserId || browser.browserId || 'chrome',
+      browserKind: page.browserKind || browser.browserKind || 'chrome-family',
+      targetId: page.targetId,
+      title: page.title || '',
+      url: page.url || '',
+    };
+  }).filter(page => page.targetId && page.browserKey);
+
+  return { version: 2, primaryBrowserKey, browsers, pages: normalizedPages };
+}
+
+function readPagesCache(currentDescriptor) {
+  return normalizePagesCache(readRawPagesCache(), currentDescriptor);
+}
+
+async function readPagesCacheForPageCommand() {
+  const raw = readRawPagesCache();
+  if (!Array.isArray(raw)) return normalizePagesCache(raw);
+  let descriptor;
+  try { descriptor = await getBrowserDescriptor(); }
+  catch (error) {
+    throw new Error(`Old pages cache cannot be used without current browser descriptor (${error.message}). Run "cdp list" again.`);
+  }
+  const cache = normalizePagesCache(raw, descriptor);
+  writePagesCacheObject(cache);
+  return cache;
+}
+
+async function readPagesCacheForStop() {
+  const raw = readRawPagesCache();
+  if (!Array.isArray(raw)) return normalizePagesCache(raw);
+  let descriptor;
+  try { descriptor = await getBrowserDescriptor(); }
+  catch { descriptor = legacyBrowserDescriptor(); }
+  return normalizePagesCache(raw, descriptor);
+}
+
+function getCachedBrowserDescriptor(browserKey) {
+  const cache = readPagesCache();
+  const browser = cache.browsers[browserKey];
+  if (!browser?.wsUrl) throw new Error(`Browser ${browserKey} missing from pages cache. Run "cdp list" again.`);
+  return { browserKey, ...browser };
+}
+
+function resolvePageRecord(targetPrefix, cache) {
+  const targetIds = [...new Set(cache.pages.map(p => p.targetId))];
+  const targetId = resolvePrefix(targetPrefix, targetIds, 'target', 'Run "cdp list".');
+  const page = cache.pages.find(p => p.targetId === targetId);
+  if (!page) throw new Error(`No target matching prefix "${targetPrefix}". Run "cdp list".`);
+  return page;
 }
 
 // ---------------------------------------------------------------------------
@@ -587,14 +772,22 @@ async function evalRawStr(cdp, sid, method, paramsJson) {
 // Per-tab daemon
 // ---------------------------------------------------------------------------
 
-async function runDaemon(targetId) {
-  const sp = sockPath(targetId);
+async function runDaemon(browserKey, targetId) {
+  let descriptor;
+  if (!targetId) {
+    targetId = browserKey;
+    descriptor = await getBrowserDescriptor();
+    browserKey = descriptor.browserKey;
+  } else {
+    descriptor = getCachedBrowserDescriptor(browserKey);
+  }
+  const sp = sockPath(browserKey, targetId);
 
   const cdp = new CDP();
   try {
-    await cdp.connect(await getWsUrl());
+    await cdp.connect(descriptor.wsUrl);
   } catch (e) {
-    process.stderr.write(`Daemon: cannot connect to Chrome: ${e.message}\n`);
+    process.stderr.write(`Daemon: cannot connect to browser: ${e.message}\n`);
     process.exit(1);
   }
 
@@ -723,8 +916,8 @@ function connectToSocket(sp) {
   });
 }
 
-async function getOrStartTabDaemon(targetId) {
-  const sp = sockPath(targetId);
+async function getOrStartTabDaemon(page) {
+  const sp = sockPath(page.browserKey, page.targetId);
   // Try existing daemon
   try { return await connectToSocket(sp); } catch {}
 
@@ -732,7 +925,7 @@ async function getOrStartTabDaemon(targetId) {
   if (!IS_WINDOWS) try { unlinkSync(sp); } catch {}
 
   // Spawn daemon
-  const child = spawn(process.execPath, [process.argv[1], '_daemon', targetId], {
+  const child = spawn(process.execPath, [process.argv[1], '_daemon', page.browserKey, page.targetId], {
     detached: true,
     stdio: 'ignore',
   });
@@ -804,18 +997,19 @@ function sendCommand(conn, req) {
 
 async function stopDaemons(targetPrefix) {
   if (!existsSync(PAGES_CACHE)) return;
-  const pages = JSON.parse(readFileSync(PAGES_CACHE, 'utf8'));
-  const targets = targetPrefix
-    ? [resolvePrefix(targetPrefix, pages.map(p => p.targetId), 'target')]
-    : pages.map(p => p.targetId);
+  const cache = await readPagesCacheForStop();
+  const pages = targetPrefix
+    ? [resolvePageRecord(targetPrefix, cache)]
+    : cache.pages;
 
-  for (const targetId of targets) {
-    const sp = sockPath(targetId);
-    try {
-      const conn = await connectToSocket(sp);
-      await sendCommand(conn, { cmd: 'stop' });
-    } catch {
-      if (!IS_WINDOWS) try { unlinkSync(sp); } catch {}
+  for (const page of pages) {
+    for (const sp of socketPathsForPage(page)) {
+      try {
+        const conn = await connectToSocket(sp);
+        await sendCommand(conn, { cmd: 'stop' });
+      } catch {
+        if (!IS_WINDOWS) try { unlinkSync(sp); } catch {}
+      }
     }
   }
 }
@@ -942,18 +1136,19 @@ async function main() {
   const [cmd, ...args] = process.argv.slice(2);
 
   // Daemon mode (internal)
-  if (cmd === '_daemon') { await runDaemon(args[0]); return; }
+  if (cmd === '_daemon') { await runDaemon(args[0], args[1]); return; }
 
   if (!cmd || cmd === 'help' || cmd === '--help' || cmd === '-h') {
     console.log(USAGE); process.exit(0);
   }
 
   if (cmd === 'list' || cmd === 'ls') {
+    const descriptor = await getBrowserDescriptor();
     const cdp = new CDP();
-    await cdp.connect(await getWsUrl());
+    await cdp.connect(descriptor.wsUrl);
     const pages = await getPages(cdp);
     cdp.close();
-    writeFileSync(PAGES_CACHE, JSON.stringify(pages), { mode: 0o600 });
+    writePagesCache(descriptor, pages);
     console.log(formatPageList(pages));
     setTimeout(() => process.exit(0), 100);
     return;
@@ -962,8 +1157,9 @@ async function main() {
   // Open new tab
   if (cmd === 'open') {
     const url = args[0] || 'about:blank';
+    const descriptor = await getBrowserDescriptor();
     const cdp = new CDP();
-    await cdp.connect(await getWsUrl());
+    await cdp.connect(descriptor.wsUrl);
     const { targetId } = await cdp.send('Target.createTarget', { url });
     // Refresh cache; new tab may not appear in getTargets immediately, so add it manually
     const pages = await getPages(cdp);
@@ -971,7 +1167,7 @@ async function main() {
       pages.push({ targetId, title: url, url });
     }
     cdp.close();
-    writeFileSync(PAGES_CACHE, JSON.stringify(pages), { mode: 0o600 });
+    writePagesCache(descriptor, pages);
     console.log(`Opened new tab: ${targetId.slice(0, 8)}  ${url}`);
     console.log('Note: this tab will need "Allow debugging?" approval on first access.');
     return;
@@ -1001,11 +1197,11 @@ async function main() {
     console.error('No page list cached. Run "cdp list" first.');
     process.exit(1);
   }
-  const pages = JSON.parse(readFileSync(PAGES_CACHE, 'utf8'));
-  const targetId = resolvePrefix(targetPrefix, pages.map(p => p.targetId), 'target', 'Run "cdp list".');
-  const page = pages.find(p => p.targetId === targetId);
+  const cache = await readPagesCacheForPageCommand();
+  const page = resolvePageRecord(targetPrefix, cache);
+  const targetId = page.targetId;
 
-  const conn = await getOrStartTabDaemon(targetId);
+  const conn = await getOrStartTabDaemon(page);
 
   const cmdArgs = args.slice(1);
 

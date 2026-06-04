@@ -1,0 +1,171 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+import {
+  createFakeChromeCDPServer,
+  createFakeLightpandaCDPServer,
+} from './support/fake-cdp.mjs';
+
+const TEST_DIR = dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = dirname(TEST_DIR);
+const CDP_CLI = join(REPO_ROOT, 'skills/chrome-cdp/scripts/cdp.mjs');
+
+test('list writes browser-aware v2 pages cache with browser metadata', async () => {
+  const tempDir = await mkdtemp(join(shortTmpRoot(), 'cdp-v2-cache-'));
+  const targetId = 'cache-target-0001';
+
+  await createFakeLightpandaCDPServer({
+    targets: [fakePage(targetId, 'Cache Metadata Page', 'https://cache-metadata.test/')],
+  }).using(async (server) => {
+    const result = await runCdp(['list'], {
+      tempDir,
+      env: { CDP_BROWSER: 'lightpanda', CDP_LIGHTPANDA_URL: server.httpUrl },
+    });
+
+    assert.equal(result.code, 0, result.stderr);
+    const cache = await readPagesCache(tempDir);
+    assert.equal(cache.version, 2);
+    assert.equal(cache.pages.length, 1);
+    assert.equal(cache.pages[0].targetId, targetId);
+    assert.equal(cache.pages[0].browserId, 'lightpanda');
+    assert.equal(cache.pages[0].browserKind, 'lightpanda');
+    assert.equal(cache.pages[0].browserKey, cache.primaryBrowserKey);
+    assert.equal(cache.browsers[cache.primaryBrowserKey].browserKind, 'lightpanda');
+    assert.match(cache.browsers[cache.primaryBrowserKey].wsUrl, /^ws:\/\//);
+  });
+});
+
+test('old array-shaped pages cache remains usable for page commands', async () => {
+  const tempDir = await mkdtemp(join(shortTmpRoot(), 'cdp-old-cache-'));
+  const targetId = 'old-cache-target-0001';
+
+  const server = await createFakeChromeCDPServer({
+    targets: [fakePage(targetId, 'Old Cache Page', 'https://old-cache.test/')],
+  }).start();
+
+  try {
+    const portFile = join(tempDir, 'chrome/DevToolsActivePort');
+    server.writeDevToolsActivePort(portFile);
+    await writeOldPagesCache(tempDir, [fakePage(targetId, 'Old Cache Page', 'https://old-cache.test/')]);
+
+    const result = await runCdp(['eval', targetId, 'document.title'], {
+      tempDir,
+      env: { CDP_PORT_FILE: portFile, CDP_HOST: server.host },
+    });
+
+    assert.equal(result.code, 0, result.stderr);
+    assert.deepEqual(commandMethods(server), ['Target.attachToTarget', 'Runtime.enable', 'Runtime.evaluate']);
+    const migratedCache = await readPagesCache(tempDir);
+    assert.equal(migratedCache.version, 2);
+    assert.equal(migratedCache.pages[0].browserKind, 'chrome-family');
+  } finally {
+    await runCdp(['stop', targetId], {
+      tempDir,
+      env: { CDP_PORT_FILE: join(tempDir, 'chrome/DevToolsActivePort'), CDP_HOST: server.host },
+    }).catch(() => {});
+    await server.stop();
+  }
+});
+
+test('browser-aware daemon sockets separate identical target ids across backends', async () => {
+  const tempDir = await mkdtemp(join(shortTmpRoot(), 'cdp-daemon-browser-key-'));
+  const targetId = 'shared-target-0001';
+
+  const lightpanda = await createFakeLightpandaCDPServer({
+    targets: [fakePage(targetId, 'Lightpanda Shared Target', 'https://lightpanda-shared.test/')],
+  }).start();
+  const chrome = await createFakeChromeCDPServer({
+    targets: [fakePage(targetId, 'Chrome Shared Target', 'https://chrome-shared.test/')],
+  }).start();
+
+  const chromePortFile = join(tempDir, 'chrome/DevToolsActivePort');
+  chrome.writeDevToolsActivePort(chromePortFile);
+  const lightpandaEnv = { CDP_BROWSER: 'lightpanda', CDP_LIGHTPANDA_URL: lightpanda.httpUrl };
+  const chromeEnv = { CDP_PORT_FILE: chromePortFile, CDP_HOST: chrome.host };
+
+  try {
+    assert.equal((await runCdp(['list'], { tempDir, env: lightpandaEnv })).code, 0);
+    assert.equal((await runCdp(['eval', targetId, '1'], { tempDir, env: lightpandaEnv })).code, 0);
+
+    assert.equal((await runCdp(['list'], { tempDir, env: chromeEnv })).code, 0);
+    const chromeEval = await runCdp(['eval', targetId, '2'], { tempDir, env: chromeEnv });
+
+    assert.equal(chromeEval.code, 0, chromeEval.stderr);
+    assert.equal(countMethod(lightpanda, 'Runtime.evaluate'), 1, 'Chrome eval must not reuse Lightpanda daemon socket');
+    assert.equal(countMethod(chrome, 'Runtime.evaluate'), 1, 'Chrome eval must run in Chrome daemon');
+    assert.equal(countMethod(chrome, 'Target.attachToTarget'), 1, 'Chrome daemon must attach to Chrome target');
+  } finally {
+    await runCdp(['stop', targetId], { tempDir, env: chromeEnv }).catch(() => {});
+    await runCdp(['list'], { tempDir, env: lightpandaEnv }).catch(() => {});
+    await runCdp(['stop', targetId], { tempDir, env: lightpandaEnv }).catch(() => {});
+    await chrome.stop();
+    await lightpanda.stop();
+  }
+});
+
+function fakePage(targetId, title, url) {
+  return { targetId, title, url };
+}
+
+function shortTmpRoot() {
+  return process.platform === 'win32' ? tmpdir() : '/tmp';
+}
+
+function pagesCachePath(tempDir) {
+  return join(tempDir, 'runtime/cdp/pages.json');
+}
+
+async function readPagesCache(tempDir) {
+  return JSON.parse(await readFile(pagesCachePath(tempDir), 'utf8'));
+}
+
+async function writeOldPagesCache(tempDir, pages) {
+  const path = pagesCachePath(tempDir);
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, JSON.stringify(pages));
+}
+
+function commandMethods(server) {
+  return server.commandLog.map((message) => message.method);
+}
+
+function countMethod(server, method) {
+  return commandMethods(server).filter((actual) => actual === method).length;
+}
+
+function runCdp(args, { tempDir, env: overrides = {} }) {
+  return new Promise((resolve, reject) => {
+    const childEnv = makeCleanEnv(tempDir, overrides);
+    execFile(process.execPath, [CDP_CLI, ...args], { env: childEnv, timeout: 10000 }, (error, stdout, stderr) => {
+      if (error?.killed || error?.signal) {
+        reject(error);
+        return;
+      }
+      resolve({
+        code: error?.code ?? 0,
+        stdout,
+        stderr,
+      });
+    });
+  });
+}
+
+function makeCleanEnv(tempDir, overrides) {
+  const env = { ...process.env };
+  for (const key of Object.keys(env)) {
+    if (key.startsWith('CDP_')) delete env[key];
+  }
+  env.HOME = join(tempDir, 'home');
+  env.XDG_RUNTIME_DIR = join(tempDir, 'runtime');
+  env.LOCALAPPDATA = join(tempDir, 'localappdata');
+  for (const [key, value] of Object.entries(overrides)) {
+    if (value === undefined) delete env[key];
+    else env[key] = value;
+  }
+  return env;
+}
