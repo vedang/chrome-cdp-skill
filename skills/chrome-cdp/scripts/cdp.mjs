@@ -1321,7 +1321,7 @@ async function main() {
   }
 
   // Page commands — need target prefix
-  if (!commandNeedsTarget(cmd)) {
+  if (!commandNeedsTarget(commandName)) {
     console.error(`Unknown command: ${cmd}\n`);
     console.log(USAGE);
     process.exit(1);

@@ -93,23 +93,19 @@ function assertSupported({ method = 'Page.captureScreenshot', code = -32000, mes
 }
 
 test('canonical command metadata normalizes documented aliases', () => {
-  const aliasPairs = new Map([
-    ['ls', 'list'],
-    ['snap', 'snapshot'],
-    ['shot', 'screenshot'],
-    ['nav', 'navigate'],
-    ['net', 'network'],
-  ]);
+  const cases = [
+    { alias: 'ls', metadata: { canonicalName: 'list', aliases: ['ls'], needsTarget: false } },
+    { alias: 'snap', metadata: { canonicalName: 'snapshot', aliases: ['snap'], needsTarget: true } },
+    { alias: 'shot', metadata: { canonicalName: 'screenshot', aliases: ['shot'], needsTarget: true } },
+    { alias: 'nav', metadata: { canonicalName: 'navigate', aliases: ['nav'], needsTarget: true } },
+    { alias: 'net', metadata: { canonicalName: 'network', aliases: ['net'], needsTarget: true } },
+  ];
 
-  for (const [alias, canonical] of aliasPairs) {
-    assert.equal(canonicalCommandName(alias), canonical);
-    assert.equal(canonicalCommandName(canonical), canonical);
-
-    const aliasMetadata = commandMetadataFor(alias);
-    assert.equal(aliasMetadata.canonicalName, canonical);
-    assert.equal(aliasMetadata.needsTarget, canonical !== 'list');
-    assert.equal(aliasMetadata.aliases.includes(alias), true);
-    assert.deepEqual(aliasMetadata, commandMetadataFor(canonical));
+  for (const { alias, metadata } of cases) {
+    assert.equal(canonicalCommandName(alias), metadata.canonicalName);
+    assert.equal(canonicalCommandName(metadata.canonicalName), metadata.canonicalName);
+    assert.deepEqual(commandMetadataFor(alias), metadata);
+    assert.deepEqual(commandMetadataFor(metadata.canonicalName), metadata);
   }
 
   assert.deepEqual(commandMetadataFor('eval'), {
