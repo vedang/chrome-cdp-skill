@@ -88,14 +88,22 @@ function socketPathsForPage(page) {
 }
 
 async function getBrowserDescriptor() {
-  if ((process.env.CDP_BROWSER || '').toLowerCase() === 'lightpanda') {
+  const browserId = primaryBrowserId();
+  if (browserId === 'lightpanda') {
     return resolveLightpandaBrowserDescriptor();
   }
-  return resolveChromeFamilyBrowserDescriptor();
+  if (CHROME_FAMILY_BROWSER_IDS.has(browserId)) {
+    return resolveChromeFamilyBrowserDescriptor(browserId);
+  }
+  throw new Error(`Unsupported CDP_BROWSER: ${process.env.CDP_BROWSER}. Expected auto, chrome, chromium, brave, edge, vivaldi, or lightpanda.`);
 }
 
-function resolveChromeFamilyBrowserDescriptor() {
-  return resolveChromeFamilyBrowser('auto', 'primary');
+function primaryBrowserId() {
+  return String(process.env.CDP_BROWSER || 'auto').trim().toLowerCase() || 'auto';
+}
+
+function resolveChromeFamilyBrowserDescriptor(browserId = 'auto') {
+  return resolveChromeFamilyBrowser(browserId, 'primary');
 }
 
 function resolveChromeFamilyBrowser(browserId = 'auto', role = 'primary') {
@@ -1152,7 +1160,7 @@ function canonicalCommandName(cmd) {
 }
 
 function isLightpandaPrimaryBrowser() {
-  return (process.env.CDP_BROWSER || '').toLowerCase() === 'lightpanda';
+  return primaryBrowserId() === 'lightpanda';
 }
 
 function fallbackBrowserSuggestion() {

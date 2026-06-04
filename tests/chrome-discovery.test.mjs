@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -47,6 +47,77 @@ test('CDP_PORT_FILE remains highest-priority Chrome-family discovery override', 
   });
 });
 
+test('CDP_BROWSER supports explicit Chrome-family browser ids', async (t) => {
+  for (const { browserId, profile, title } of [
+    { browserId: 'auto', profile: 'google-chrome', title: 'Auto Chrome Page' },
+    { browserId: 'chrome', profile: 'google-chrome', title: 'Explicit Chrome Page' },
+    { browserId: 'chromium', profile: 'chromium', title: 'Explicit Chromium Page' },
+    { browserId: 'brave', profile: 'BraveSoftware/Brave-Browser', title: 'Explicit Brave Page' },
+    { browserId: 'edge', profile: 'microsoft-edge', title: 'Explicit Edge Page' },
+    { browserId: 'vivaldi', profile: 'vivaldi', title: 'Explicit Vivaldi Page' },
+  ]) {
+    await t.test(browserId, async () => {
+      const tempDir = await mkdtemp(join(tmpdir(), `cdp-browser-${browserId}-`));
+
+      await createFakeChromeCDPServer({
+        targets: [fakePage(`${browserId}-target-0001`, title, `https://${browserId}.test/`)],
+      }).using(async (server) => {
+        server.writeDevToolsActivePort(linuxProfilePortFile(tempDir, profile));
+
+        const result = await runCdp(['list'], { tempDir, env: { CDP_BROWSER: browserId } });
+
+        assertListSucceeded(result, title);
+        assert.deepEqual(server.commandLog.map((message) => message.method), ['Target.getTargets']);
+        const cache = await readPagesCache(tempDir);
+        assert.equal(cache.browsers[cache.primaryBrowserKey].browserId, browserId === 'auto' ? 'chrome' : browserId);
+      });
+    });
+  }
+});
+
+test('CDP_BROWSER narrows profile discovery to the requested Chrome-family browser', async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), 'cdp-browser-narrow-'));
+
+  await withFakeChromeServers([
+    { targets: [fakePage('chrome-skipped-0001', 'Skipped Chrome Page', 'https://skipped-chrome.test/')] },
+    { targets: [fakePage('brave-selected-0001', 'Selected Brave Page', 'https://selected-brave.test/')] },
+  ], async ([chromeServer, braveServer]) => {
+    chromeServer.writeDevToolsActivePort(linuxProfilePortFile(tempDir, 'google-chrome'));
+    braveServer.writeDevToolsActivePort(linuxProfilePortFile(tempDir, 'BraveSoftware/Brave-Browser'));
+
+    const result = await runCdp(['list'], { tempDir, env: { CDP_BROWSER: 'brave' } });
+
+    assertListShows(result, 'Selected Brave Page', 'Skipped Chrome Page');
+    assertOnlyQueried(braveServer, chromeServer);
+  });
+});
+
+test('CDP_BROWSER preserves CDP_PORT_FILE and CDP_HOST override semantics', async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), 'cdp-browser-port-host-'));
+
+  await withFakeChromeServers([
+    { targets: [fakePage('profile-vivaldi-0001', 'Profile Vivaldi Page', 'https://profile-vivaldi.test/')] },
+    { targets: [fakePage('override-vivaldi-0001', 'Override Vivaldi Page', 'https://override-vivaldi.test/')] },
+  ], async ([profileServer, overrideServer]) => {
+    profileServer.writeDevToolsActivePort(linuxProfilePortFile(tempDir, 'vivaldi'));
+    const overridePortFile = join(tempDir, 'override/DevToolsActivePort');
+    overrideServer.writeDevToolsActivePort(overridePortFile);
+
+    const result = await runCdp(['list'], {
+      tempDir,
+      env: { CDP_BROWSER: 'vivaldi', CDP_PORT_FILE: overridePortFile, CDP_HOST: overrideServer.host },
+    });
+
+    assertListShows(result, 'Override Vivaldi Page', 'Profile Vivaldi Page');
+    assertOnlyQueried(overrideServer, profileServer);
+    const cache = await readPagesCache(tempDir);
+    const browser = cache.browsers[cache.primaryBrowserKey];
+    assert.equal(browser.browserId, 'vivaldi');
+    assert.equal(browser.wsUrl, overrideServer.wsUrl);
+    assert.equal(browser.source, 'CDP_PORT_FILE');
+  });
+});
+
 async function withFakeChromeServers(serverOptions, callback) {
   const servers = [];
   try {
@@ -65,6 +136,19 @@ function fakePage(targetId, title, url) {
 
 function profilePortFile(tempDir, profile) {
   return join(tempDir, 'home/Library/Application Support', profile, 'DevToolsActivePort');
+}
+
+function linuxProfilePortFile(tempDir, profile) {
+  return join(tempDir, 'home/.config', profile, 'DevToolsActivePort');
+}
+
+async function readPagesCache(tempDir) {
+  return JSON.parse(await readFile(join(tempDir, 'runtime/cdp/pages.json'), 'utf8'));
+}
+
+function assertListSucceeded(result, visibleTitle) {
+  assert.equal(result.code, 0, result.stderr);
+  assert.match(result.stdout, new RegExp(visibleTitle));
 }
 
 function assertListShows(result, visibleTitle, hiddenTitle) {
