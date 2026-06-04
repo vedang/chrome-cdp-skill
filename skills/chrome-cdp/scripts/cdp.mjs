@@ -35,7 +35,14 @@ function sockPath(targetId) {
     : resolve(RUNTIME_DIR, `cdp-${targetId}.sock`);
 }
 
-function getWsUrl() {
+async function getWsUrl() {
+  if ((process.env.CDP_BROWSER || '').toLowerCase() === 'lightpanda') {
+    return resolveLightpandaWsUrl();
+  }
+  return getChromeFamilyWsUrl();
+}
+
+function getChromeFamilyWsUrl() {
   const home = homedir();
   // macOS: ~/Library/Application Support/<name>/DevToolsActivePort
   const macBrowsers = [
@@ -85,6 +92,59 @@ function getWsUrl() {
   if (lines.length < 2 || !lines[0] || !lines[1]) throw new Error(`Invalid DevToolsActivePort file: ${portFile}`);
   const host = process.env.CDP_HOST || '127.0.0.1';
   return `ws://${host}:${lines[0]}${lines[1]}`;
+}
+
+async function resolveLightpandaWsUrl() {
+  const directWsUrl = process.env.CDP_LIGHTPANDA_WS_URL;
+  const httpBaseUrl = directWsUrl
+    ? httpBaseUrlFromWsUrl(directWsUrl)
+    : lightpandaHttpBaseUrl();
+  const version = await fetchLightpandaVersion(httpBaseUrl);
+  validateLightpandaVersion(version);
+  return directWsUrl || version.webSocketDebuggerUrl;
+}
+
+function lightpandaHttpBaseUrl() {
+  if (process.env.CDP_LIGHTPANDA_URL) {
+    const url = new URL(process.env.CDP_LIGHTPANDA_URL);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+      throw new Error('CDP_LIGHTPANDA_URL must use http:// or https://');
+    }
+    url.pathname = '';
+    url.search = '';
+    url.hash = '';
+    return url.toString().replace(/\/$/, '');
+  }
+  const host = process.env.CDP_LIGHTPANDA_HOST || '127.0.0.1';
+  const port = process.env.CDP_LIGHTPANDA_PORT || '9222';
+  return `http://${host}:${port}`;
+}
+
+function httpBaseUrlFromWsUrl(wsUrl) {
+  const url = new URL(wsUrl);
+  if (url.protocol === 'ws:') url.protocol = 'http:';
+  else if (url.protocol === 'wss:') url.protocol = 'https:';
+  else throw new Error('CDP_LIGHTPANDA_WS_URL must use ws:// or wss://');
+  url.pathname = '';
+  url.search = '';
+  url.hash = '';
+  return url.toString().replace(/\/$/, '');
+}
+
+async function fetchLightpandaVersion(httpBaseUrl) {
+  const response = await fetch(`${httpBaseUrl}/json/version`);
+  if (!response.ok) throw new Error(`Lightpanda /json/version failed: HTTP ${response.status}`);
+  const version = await response.json();
+  if (!version.webSocketDebuggerUrl) throw new Error('Lightpanda /json/version missing webSocketDebuggerUrl');
+  return version;
+}
+
+function validateLightpandaVersion(version) {
+  if (process.env.CDP_LIGHTPANDA_ALLOW_NON_LIGHTPANDA === '1') return;
+  const browser = String(version.Browser || '');
+  const userAgent = String(version['User-Agent'] || '');
+  if (browser.startsWith('Lightpanda/') || userAgent.startsWith('Lightpanda/')) return;
+  throw new Error(`Expected Lightpanda CDP endpoint, got Browser=${browser || '<missing>'} User-Agent=${userAgent || '<missing>'}`);
 }
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -488,7 +548,7 @@ async function runDaemon(targetId) {
 
   const cdp = new CDP();
   try {
-    await cdp.connect(getWsUrl());
+    await cdp.connect(await getWsUrl());
   } catch (e) {
     process.stderr.write(`Daemon: cannot connect to Chrome: ${e.message}\n`);
     process.exit(1);
@@ -791,7 +851,7 @@ async function main() {
 
   if (cmd === 'list' || cmd === 'ls') {
     const cdp = new CDP();
-    await cdp.connect(getWsUrl());
+    await cdp.connect(await getWsUrl());
     const pages = await getPages(cdp);
     cdp.close();
     writeFileSync(PAGES_CACHE, JSON.stringify(pages), { mode: 0o600 });
@@ -804,7 +864,7 @@ async function main() {
   if (cmd === 'open') {
     const url = args[0] || 'about:blank';
     const cdp = new CDP();
-    await cdp.connect(getWsUrl());
+    await cdp.connect(await getWsUrl());
     const { targetId } = await cdp.send('Target.createTarget', { url });
     // Refresh cache; new tab may not appear in getTargets immediately, so add it manually
     const pages = await getPages(cdp);
