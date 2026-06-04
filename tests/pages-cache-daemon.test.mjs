@@ -76,15 +76,14 @@ test('browser keys remain stable for the same Chrome-family endpoint', async () 
 test('old array-shaped pages cache remains usable for page commands', async () => {
   const tempDir = await mkdtemp(join(shortTmpRoot(), 'cdp-old-cache-'));
   const targetId = 'old-cache-target-0001';
+  const page = fakePage(targetId, 'Old Cache Page', 'https://old-cache.test/');
 
-  const server = await createFakeChromeCDPServer({
-    targets: [fakePage(targetId, 'Old Cache Page', 'https://old-cache.test/')],
-  }).start();
+  const server = await createFakeChromeCDPServer({ targets: [page] }).start();
 
   try {
     const portFile = join(tempDir, 'chrome/DevToolsActivePort');
     server.writeDevToolsActivePort(portFile);
-    await writeOldPagesCache(tempDir, [fakePage(targetId, 'Old Cache Page', 'https://old-cache.test/')]);
+    await writeOldPagesCache(tempDir, [page]);
 
     const result = await runCdp(['eval', targetId, 'document.title'], {
       tempDir,
@@ -92,10 +91,8 @@ test('old array-shaped pages cache remains usable for page commands', async () =
     });
 
     assertCdpOk(result);
-    assert.deepEqual(commandMethods(server), ['Target.attachToTarget', 'Runtime.enable', 'Runtime.evaluate']);
-    const migratedCache = await readPagesCache(tempDir);
-    assert.equal(migratedCache.version, 2);
-    assert.equal(migratedCache.pages[0].browserKind, 'chrome-family');
+    assertEvalTouchedPage(server);
+    assertMigratedPageBrowser(await readPagesCache(tempDir), { browserKind: 'chrome-family' });
   } finally {
     await ignoreFailure(runCdp(['stop', targetId], {
       tempDir,
@@ -108,26 +105,22 @@ test('old array-shaped pages cache remains usable for page commands', async () =
 test('old array-shaped pages cache wraps entries with current primary descriptor', async () => {
   const tempDir = await mkdtemp(join(shortTmpRoot(), 'cdp-olp-'));
   const targetId = 'olp-target-0001';
+  const page = fakePage(targetId, 'Old Lightpanda Cache Page', 'https://old-lightpanda-cache.test/');
 
-  const server = await createFakeLightpandaCDPServer({
-    targets: [fakePage(targetId, 'Old Lightpanda Cache Page', 'https://old-lightpanda-cache.test/')],
-  }).start();
+  const server = await createFakeLightpandaCDPServer({ targets: [page] }).start();
   const env = { CDP_BROWSER: 'lightpanda', CDP_LIGHTPANDA_URL: server.httpUrl };
 
   try {
-    await writeOldPagesCache(tempDir, [fakePage(targetId, 'Old Lightpanda Cache Page', 'https://old-lightpanda-cache.test/')]);
+    await writeOldPagesCache(tempDir, [page]);
 
     const result = await runCdp(['eval', targetId, 'document.title'], { tempDir, env });
 
     assertCdpOk(result);
-    assert.deepEqual(commandMethods(server), ['Target.attachToTarget', 'Runtime.enable', 'Runtime.evaluate']);
-    const migratedCache = await readPagesCache(tempDir);
-    const browserKey = migratedCache.primaryBrowserKey;
-    assert.equal(migratedCache.browsers[browserKey].browserId, 'lightpanda');
-    assert.equal(migratedCache.browsers[browserKey].browserKind, 'lightpanda');
-    assert.equal(migratedCache.pages[0].browserKey, browserKey);
-    assert.equal(migratedCache.pages[0].browserId, 'lightpanda');
-    assert.equal(migratedCache.pages[0].browserKind, 'lightpanda');
+    assertEvalTouchedPage(server);
+    assertMigratedPageBrowser(await readPagesCache(tempDir), {
+      browserId: 'lightpanda',
+      browserKind: 'lightpanda',
+    });
   } finally {
     await ignoreFailure(runCdp(['stop', targetId], { tempDir, env }));
     await server.stop();
@@ -182,6 +175,22 @@ test('browser-aware daemon sockets separate identical target ids across backends
 
 function assertCdpOk(result) {
   assert.equal(result.code, 0, result.stderr);
+}
+
+function assertEvalTouchedPage(server) {
+  assert.deepEqual(commandMethods(server), ['Target.attachToTarget', 'Runtime.enable', 'Runtime.evaluate']);
+}
+
+function assertMigratedPageBrowser(cache, { browserId, browserKind }) {
+  const browserKey = cache.primaryBrowserKey;
+  assert.equal(cache.version, 2);
+  assert.equal(cache.browsers[browserKey].browserKind, browserKind);
+  assert.equal(cache.pages[0].browserKey, browserKey);
+  assert.equal(cache.pages[0].browserKind, browserKind);
+  if (browserId) {
+    assert.equal(cache.browsers[browserKey].browserId, browserId);
+    assert.equal(cache.pages[0].browserId, browserId);
+  }
 }
 
 async function ignoreFailure(promise) {
