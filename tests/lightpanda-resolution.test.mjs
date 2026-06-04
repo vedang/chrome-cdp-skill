@@ -147,11 +147,7 @@ test('CDP_BROWSER=lightpanda rejects a non-Lightpanda /json/version product', as
   await createFakeChromeCDPServer().using(async (server) => {
     const result = await runLightpandaList(tempDir, { CDP_LIGHTPANDA_URL: server.httpUrl });
 
-    assert.notEqual(result.code, 0);
-    assert.match(result.stderr, /Expected Lightpanda CDP endpoint/);
-    assert.match(result.stderr, /Chrome\/126\.0\.0\.0/);
-    assertVersionRequests(server);
-    assert.equal(server.connectionLog.length, 0, 'product validation must fail before WebSocket connection');
+    assertProductRejected(result, server, /Chrome\/126\.0\.0\.0/);
   });
 });
 
@@ -164,11 +160,7 @@ test('CDP_BROWSER=lightpanda rejects Lightpanda product near-misses', async () =
   }).using(async (server) => {
     const result = await runLightpandaList(tempDir, { CDP_LIGHTPANDA_URL: server.httpUrl });
 
-    assert.notEqual(result.code, 0);
-    assert.match(result.stderr, /Expected Lightpanda CDP endpoint/);
-    assert.match(result.stderr, /LightpandaBrowser\/1\.0\.0/);
-    assertVersionRequests(server);
-    assert.equal(server.connectionLog.length, 0, 'near-miss validation must fail before WebSocket connection');
+    assertProductRejected(result, server, /LightpandaBrowser\/1\.0\.0/);
   });
 });
 
@@ -213,6 +205,14 @@ function assertListSucceeded(result, titlePattern) {
 
 function assertGotTargets(server) {
   assert.deepEqual(commandMethods(server), ['Target.getTargets']);
+}
+
+function assertProductRejected(result, server, productPattern) {
+  assert.notEqual(result.code, 0);
+  assert.match(result.stderr, /Expected Lightpanda CDP endpoint/);
+  assert.match(result.stderr, productPattern);
+  assertVersionRequests(server);
+  assert.deepEqual(connectionUrls(server), [], 'product validation must fail before WebSocket connection');
 }
 
 function assertVersionRequests(server, count = 1) {
