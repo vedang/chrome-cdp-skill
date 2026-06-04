@@ -15,9 +15,8 @@ const CDP_CLI = join(REPO_ROOT, 'skills/chrome-cdp/scripts/cdp.mjs');
 test('open uses selected primary browser descriptor wsUrl', async () => {
   const tempDir = await mkdtemp(join(shortTmpRoot(), 'cdp-open-primary-descriptor-'));
 
-  await withChromeAndBrave(async ({ chrome, brave, braveEnv }) => {
-    chrome.writeDevToolsActivePort(linuxProfilePortFile(tempDir, 'google-chrome'));
-    brave.writeDevToolsActivePort(linuxProfilePortFile(tempDir, 'BraveSoftware/Brave-Browser'));
+  await withChromeAndBrave({}, async ({ chrome, brave, braveEnv }) => {
+    writeChromeAndBravePortFiles(tempDir, { chrome, brave });
 
     const result = await runCdp(['open', 'https://opened-in-brave.test/'], {
       tempDir,
@@ -43,8 +42,7 @@ test('page command uses cached primary browser descriptor wsUrl after list', asy
     chromeTargets: [fakePage('chrome-alternate-0001', 'Alternate Chrome Page', 'https://alternate-chrome.test/')],
     braveTargets: [fakePage(targetId, 'Primary Brave Page', 'https://primary-brave.test/')],
   }, async ({ chrome, brave, chromeEnv, braveEnv }) => {
-    chrome.writeDevToolsActivePort(linuxProfilePortFile(tempDir, 'google-chrome'));
-    brave.writeDevToolsActivePort(linuxProfilePortFile(tempDir, 'BraveSoftware/Brave-Browser'));
+    writeChromeAndBravePortFiles(tempDir, { chrome, brave });
 
     assertCdpOk(await runCdp(['list'], { tempDir, env: braveEnv }));
     assertCdpOk(await runCdp(['eval', targetId, '42'], { tempDir, env: chromeEnv }));
@@ -61,16 +59,12 @@ test('page command uses cached primary browser descriptor wsUrl after list', asy
   });
 });
 
-async function withChromeAndBrave(optionsOrCallback, maybeCallback, maybeFinallyCallback) {
-  const options = typeof optionsOrCallback === 'function' ? {} : optionsOrCallback;
-  const callback = typeof optionsOrCallback === 'function' ? optionsOrCallback : maybeCallback;
-  const finallyCallback = typeof optionsOrCallback === 'function' ? maybeCallback : maybeFinallyCallback;
-  const chrome = await createFakeChromeCDPServer({
-    targets: options.chromeTargets || [fakePage('chrome-primary-0001', 'Chrome Page', 'https://chrome.test/')],
-  }).start();
-  const brave = await createFakeChromeCDPServer({
-    targets: options.braveTargets || [fakePage('brave-primary-0001', 'Brave Page', 'https://brave.test/')],
-  }).start();
+async function withChromeAndBrave({
+  chromeTargets = [fakePage('chrome-primary-0001', 'Chrome Page', 'https://chrome.test/')],
+  braveTargets = [fakePage('brave-primary-0001', 'Brave Page', 'https://brave.test/')],
+}, callback, finallyCallback) {
+  const chrome = await createFakeChromeCDPServer({ targets: chromeTargets }).start();
+  const brave = await createFakeChromeCDPServer({ targets: braveTargets }).start();
   const context = {
     chrome,
     brave,
@@ -92,6 +86,11 @@ function fakePage(targetId, title, url) {
 
 function shortTmpRoot() {
   return process.platform === 'win32' ? tmpdir() : '/tmp';
+}
+
+function writeChromeAndBravePortFiles(tempDir, { chrome, brave }) {
+  chrome.writeDevToolsActivePort(linuxProfilePortFile(tempDir, 'google-chrome'));
+  brave.writeDevToolsActivePort(linuxProfilePortFile(tempDir, 'BraveSoftware/Brave-Browser'));
 }
 
 function linuxProfilePortFile(tempDir, profile) {

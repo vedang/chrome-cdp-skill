@@ -277,6 +277,9 @@ function validateLightpandaVersion(version) {
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
+function exitAfterCdpCleanup() {
+  setTimeout(() => process.exit(0), 100);
+}
 
 function resolvePrefix(prefix, candidates, noun = 'target', missingHint = '') {
   const upper = prefix.toUpperCase();
@@ -1212,7 +1215,7 @@ async function main() {
     cdp.close();
     writePagesCache(descriptor, pages);
     console.log(formatPageList(pages));
-    setTimeout(() => process.exit(0), 100);
+    exitAfterCdpCleanup();
     return;
   }
 
@@ -1232,7 +1235,7 @@ async function main() {
     writePagesCache(descriptor, pages);
     console.log(`Opened new tab: ${targetId.slice(0, 8)}  ${url}`);
     console.log('Note: this tab will need "Allow debugging?" approval on first access.');
-    setTimeout(() => process.exit(0), 100);
+    exitAfterCdpCleanup();
     return;
   }
 
