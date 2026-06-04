@@ -11,6 +11,7 @@ import { createHash } from 'crypto';
 import { readFileSync, writeFileSync, unlinkSync, existsSync, mkdirSync } from 'fs';
 import { homedir } from 'os';
 import { resolve } from 'path';
+import { pathToFileURL } from 'url';
 import { spawn } from 'child_process';
 import net from 'net';
 
@@ -461,7 +462,7 @@ function resolvePageRecord(targetPrefix, cache) {
 // CDP WebSocket client
 // ---------------------------------------------------------------------------
 
-class CDPError extends Error {
+export class CDPError extends Error {
   constructor(method, error = {}, sessionId) {
     super(String(error.message || `CDP error: ${method}`));
     this.name = 'CDPError';
@@ -472,7 +473,7 @@ class CDPError extends Error {
   }
 }
 
-class CDP {
+export class CDP {
   #ws; #id = 0; #pending = new Map(); #eventHandlers = new Map(); #closeHandlers = [];
 
   async connect(wsUrl) {
@@ -484,8 +485,9 @@ class CDP {
       this.#ws.onmessage = (ev) => {
         const msg = JSON.parse(ev.data);
         if (msg.id && this.#pending.has(msg.id)) {
-          const { resolve, reject, method, sessionId } = this.#pending.get(msg.id);
+          const { resolve, reject, method, sessionId, timer } = this.#pending.get(msg.id);
           this.#pending.delete(msg.id);
+          clearTimeout(timer);
           if (msg.error) reject(new CDPError(method, msg.error, sessionId));
           else resolve(msg.result);
         } else if (msg.method && this.#eventHandlers.has(msg.method)) {
@@ -500,16 +502,16 @@ class CDP {
   send(method, params = {}, sessionId) {
     const id = ++this.#id;
     return new Promise((resolve, reject) => {
-      this.#pending.set(id, { resolve, reject, method, sessionId });
-      const msg = { id, method, params };
-      if (sessionId) msg.sessionId = sessionId;
-      this.#ws.send(JSON.stringify(msg));
-      setTimeout(() => {
+      const timer = setTimeout(() => {
         if (this.#pending.has(id)) {
           this.#pending.delete(id);
           reject(new Error(`Timeout: ${method}`));
         }
       }, TIMEOUT);
+      this.#pending.set(id, { resolve, reject, method, sessionId, timer });
+      const msg = { id, method, params };
+      if (sessionId) msg.sessionId = sessionId;
+      this.#ws.send(JSON.stringify(msg));
     });
   }
 
@@ -1336,4 +1338,10 @@ async function main() {
   }
 }
 
-main().catch(e => { console.error(e.message); process.exit(1); });
+function isMainModule() {
+  return Boolean(process.argv[1]) && import.meta.url === pathToFileURL(process.argv[1]).href;
+}
+
+if (isMainModule()) {
+  main().catch(e => { console.error(e.message); process.exit(1); });
+}
