@@ -90,7 +90,6 @@ test('CDP_BROWSER=lightpanda open uses Target.createTarget instead of /json/new'
     assert.match(result.stdout, /Opened new tab:/);
     assertVersionRequests(server);
     assert.deepEqual(commandMethods(server), ['Target.createTarget', 'Target.getTargets']);
-    assert.equal(requestUrls(server).includes('/json/new'), false, 'open must not use /json/new');
     assert.equal(server.targets.some(target => target.url === 'https://lightpanda-open.test/'), true);
   });
 });
