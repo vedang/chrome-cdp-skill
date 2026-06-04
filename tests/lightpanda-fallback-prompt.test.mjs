@@ -58,6 +58,37 @@ test('unsupported Lightpanda page command emits fallback approval prompt without
   }
 });
 
+test('unsupported Lightpanda exits before resolving configured fallback browser', async () => {
+  const tempDir = await mkdtemp(join(shortTmpRoot(), 'cdp-lp-nores-'));
+  const targetId = 'lp-nofb1';
+  const primaryUrl = 'https://lightpanda-no-fallback.test/workflow';
+
+  const lightpanda = await createFakeLightpandaCDPServer({
+    targets: [fakePage(targetId, 'No Fallback Resolve Page', primaryUrl)],
+    unsupportedMethods: [UNSUPPORTED_SHOT_METHOD],
+  }).start();
+
+  try {
+    const env = {
+      ...makeLightpandaEnv(lightpanda),
+      CDP_FALLBACK_BROWSER: 'chrome',
+      CDP_FALLBACK_PORT_FILE: join(tempDir, 'missing/DevToolsActivePort'),
+      CDP_FALLBACK_HOST: '127.0.0.250',
+    };
+
+    await assertLightpandaPageListed(tempDir, env, /No Fallback Resolve Page/);
+
+    const shot = await runCdp(['shot', targetId], { tempDir, env });
+    assert.equal(shot.code, 1, shot.stderr);
+    assert.equal(shot.stdout, '');
+    assert.match(shot.stderr, /LIGHTPANDA_UNSUPPORTED_FALLBACK_REQUIRED/);
+    assert.doesNotMatch(shot.stderr, /No DevToolsActivePort found|ECONNREFUSED|Daemon failed to start/);
+  } finally {
+    await stopLightpandaDaemon(tempDir, targetId, lightpanda);
+    await lightpanda.stop();
+  }
+});
+
 test('unsupported Lightpanda fallback prompt uses cached page record when current env changes', async () => {
   const tempDir = await mkdtemp(join(shortTmpRoot(), 'cdp-lp-cache-'));
   const targetId = 'clp-shot-0001';
