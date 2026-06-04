@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { access, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -176,6 +177,55 @@ test('daemon starts from cached page browserKey when current env cannot resolve 
   }
 });
 
+test('stop uses v2 cache without current browser env', async () => {
+  const tempDir = await mkdtemp(join(shortTmpRoot(), 'cdp-stop-v2-cache-'));
+  const targetId = 'stop-v2-target-0001';
+
+  const server = await createFakeChromeCDPServer({
+    targets: [fakePage(targetId, 'Stop V2 Page', 'https://stop-v2.test/')],
+  }).start();
+
+  try {
+    const portFile = join(tempDir, 'chrome/DevToolsActivePort');
+    server.writeDevToolsActivePort(portFile);
+    assertCdpOk(await runCdp(['list'], {
+      tempDir,
+      env: { CDP_PORT_FILE: portFile, CDP_HOST: server.host },
+    }));
+
+    assertCdpOk(await runCdp(['eval', targetId, '1'], { tempDir }));
+    assert.equal(countMethod(server, 'Target.attachToTarget'), 1);
+
+    assertCdpOk(await runCdp(['stop', targetId], { tempDir }));
+    assertCdpOk(await runCdp(['eval', targetId, '2'], { tempDir }));
+
+    assert.equal(countMethod(server, 'Target.attachToTarget'), 2, 'second eval must start a fresh daemon after stop');
+    assert.equal(countMethod(server, 'Runtime.evaluate'), 2);
+  } finally {
+    await ignoreFailure(runCdp(['stop', targetId], { tempDir }));
+    await server.stop();
+  }
+});
+
+test('stop old array-shaped pages cache uses legacy target socket without browser env', async (t) => {
+  if (process.platform === 'win32') {
+    t.skip('legacy target socket path assertion is Unix-only');
+    return;
+  }
+
+  const tempDir = await mkdtemp(join(shortTmpRoot(), 'cdp-stop-old-cache-'));
+  const targetId = 'stop-old-target-0001';
+  await writeOldPagesCache(tempDir, [fakePage(targetId, 'Stop Old Cache Page', 'https://stop-old-cache.test/')]);
+  const daemon = await createFakeLegacyDaemonSocket(tempDir, targetId);
+
+  try {
+    assertCdpOk(await runCdp(['stop', targetId], { tempDir }));
+    assert.deepEqual(await waitFor(daemon.commands, 1000, 'legacy daemon did not receive stop'), ['stop']);
+  } finally {
+    await daemon.close();
+  }
+});
+
 test('browser-aware daemon sockets separate identical target ids across backends', async () => {
   const tempDir = await mkdtemp(join(shortTmpRoot(), 'cdp-daemon-browser-key-'));
   const targetId = 'shared-target-0001';
@@ -212,6 +262,64 @@ test('browser-aware daemon sockets separate identical target ids across backends
     await lightpanda.stop();
   }
 });
+
+async function createFakeLegacyDaemonSocket(tempDir, targetId) {
+  const socketPath = daemonSocketPath(tempDir, targetId);
+  await mkdir(dirname(socketPath), { recursive: true });
+
+  let resolveCommands;
+  let rejectCommands;
+  const commands = [];
+  const commandPromise = new Promise((resolve, reject) => {
+    resolveCommands = resolve;
+    rejectCommands = reject;
+  });
+
+  const server = createServer((conn) => {
+    let buffer = '';
+    conn.on('data', (chunk) => {
+      buffer += chunk.toString();
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const request = JSON.parse(line);
+          commands.push(request.cmd);
+          conn.end(JSON.stringify({ id: request.id, ok: true, result: '' }) + '\n');
+          resolveCommands([...commands]);
+        } catch (error) {
+          rejectCommands(error);
+        }
+      }
+    });
+  });
+
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(socketPath, () => {
+      server.off('error', reject);
+      resolve();
+    });
+  });
+
+  return {
+    commands: commandPromise,
+    close: () => new Promise((resolve) => server.close(() => resolve())),
+  };
+}
+
+async function waitFor(promise, ms, message) {
+  let timer;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(message)), ms); }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 function assertCdpOk(result) {
   assert.equal(result.code, 0, result.stderr);
