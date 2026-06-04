@@ -33,13 +33,19 @@ test('list writes browser-aware v2 pages cache with browser metadata', async () 
     const browser = cache.browsers[cache.primaryBrowserKey];
 
     assert.equal(cache.version, 2);
+    assert.equal(cache.primaryBrowserKey, page.browserKey);
+    assert.deepEqual(Object.keys(cache.browsers), [page.browserKey]);
     assert.equal(cache.pages.length, 1);
-    assert.equal(page.targetId, targetId);
+    assert.equal(page.browserKey, cache.primaryBrowserKey);
     assert.equal(page.browserId, 'lightpanda');
     assert.equal(page.browserKind, 'lightpanda');
-    assert.equal(page.browserKey, cache.primaryBrowserKey);
+    assert.equal(page.targetId, targetId);
+    assert.equal(page.title, 'Cache Metadata Page');
+    assert.equal(page.url, 'https://cache-metadata.test/');
+    assert.equal(browser.browserId, 'lightpanda');
     assert.equal(browser.browserKind, 'lightpanda');
     assert.match(browser.wsUrl, /^ws:\/\//);
+    assert.equal(browser.source, 'CDP_LIGHTPANDA_URL');
   });
 });
 
