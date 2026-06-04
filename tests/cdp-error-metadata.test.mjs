@@ -26,7 +26,7 @@ test('CDPError preserves protocol metadata from failed send', async () => {
       await assert.rejects(
         () => cdp.send('Runtime.evaluate', { expression: 'boom()' }, sessionId),
         (error) => {
-          assert.equal(error instanceof CDPError, true);
+          assert.ok(error instanceof CDPError);
           assert.equal(error.name, 'CDPError');
           assert.equal(error.method, 'Runtime.evaluate');
           assert.equal(error.code, -32042);

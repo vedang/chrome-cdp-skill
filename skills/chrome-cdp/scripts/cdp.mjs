@@ -1338,10 +1338,6 @@ async function main() {
   }
 }
 
-function isMainModule() {
-  return Boolean(process.argv[1]) && import.meta.url === pathToFileURL(process.argv[1]).href;
-}
-
-if (isMainModule()) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch(e => { console.error(e.message); process.exit(1); });
 }
