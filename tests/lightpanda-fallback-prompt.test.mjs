@@ -151,19 +151,26 @@ function assertFallbackPrompt(result, { commandTarget, targetId, primaryUrl, sug
   assert.notEqual(result.code, 0);
   assert.equal(result.stdout, '');
 
-  const lines = result.stderr.trimEnd().split('\n');
-  assert.equal(lines[0], 'LIGHTPANDA_UNSUPPORTED_FALLBACK_REQUIRED');
-  assert.equal(lines.includes(`Command: shot ${commandTarget || targetId}`), true);
-  assert.equal(lines.includes('Normalized command: screenshot'), true);
-  assert.equal(lines.includes(`Target: ${targetId}`), true);
-  assert.equal(lines.includes('Failed CDP method: Page.captureScreenshot (-32601 Method not found)'), true);
-  assert.equal(lines.includes(`Command CDP methods: ${SCREENSHOT_CDP_METHODS_TEXT}`), true);
-  assert.equal(lines.includes(`Primary URL: ${primaryUrl}`), true);
-  assert.equal(lines.includes(`Suggested fallback browser: ${suggestedFallback}`), true);
+  assertPromptLines(result.stderr, [
+    'LIGHTPANDA_UNSUPPORTED_FALLBACK_REQUIRED',
+    `Command: shot ${commandTarget || targetId}`,
+    'Normalized command: screenshot',
+    `Target: ${targetId}`,
+    'Failed CDP method: Page.captureScreenshot (-32601 Method not found)',
+    `Command CDP methods: ${SCREENSHOT_CDP_METHODS_TEXT}`,
+    `Primary URL: ${primaryUrl}`,
+    `Suggested fallback browser: ${suggestedFallback}`,
+  ]);
 
   assert.match(result.stderr, /did not run fallback automatically/);
   assert.match(result.stderr, /cookies, login, localStorage, DOM mutations, typed text, JS heap, or in-page workflow may differ/);
   assert.match(result.stderr, /Ask the user before fallback execution/);
+}
+
+function assertPromptLines(stderr, requiredLines) {
+  const lines = stderr.trimEnd().split('\n');
+  assert.equal(lines[0], requiredLines[0]);
+  for (const line of requiredLines.slice(1)) assert.equal(lines.includes(line), true, line);
 }
 
 function assertFallbackUntouched(server) {
