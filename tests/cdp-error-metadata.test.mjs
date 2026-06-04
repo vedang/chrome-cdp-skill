@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
+import { once } from 'node:events';
 import { readFile, mkdtemp } from 'node:fs/promises';
 import net from 'node:net';
 import { tmpdir } from 'node:os';
@@ -55,15 +56,16 @@ test('CDPError preserves protocol metadata from failed send', async () => {
 test('daemon responses include CDP error metadata for failed page commands', async () => {
   const tempDir = await mkdtemp(join(shortTmpRoot(), 'cdp-daemon-error-metadata-'));
   const targetId = 'daemon-error-target-0001';
+  const screenshotMethod = 'Page.captureScreenshot';
   const screenshotError = {
     code: -32601,
     message: 'Method not found',
-    data: { method: 'Page.captureScreenshot', backend: 'fixture' },
+    data: { method: screenshotMethod, backend: 'fixture' },
   };
 
   const server = await createFakeChromeCDPServer({
     targets: [fakePage(targetId, 'Daemon Error Metadata Page', 'https://daemon-error.test/')],
-    methodErrors: { 'Page.captureScreenshot': screenshotError },
+    methodErrors: { [screenshotMethod]: screenshotError },
   }).start();
 
   try {
@@ -85,9 +87,9 @@ test('daemon responses include CDP error metadata for failed page commands', asy
       ok: false,
       error: screenshotError.message,
       errorCode: screenshotError.code,
-      errorMethod: 'Page.captureScreenshot',
+      errorMethod: screenshotMethod,
       errorData: screenshotError.data,
-      unsupportedMethod: 'Page.captureScreenshot',
+      unsupportedMethod: screenshotMethod,
     });
   } finally {
     await ignoreFailure(runCdp(['stop', targetId], { tempDir }));
@@ -135,67 +137,28 @@ async function ignoreFailure(promise) {
   try { await promise; } catch {}
 }
 
-function sendDaemonCommand(socketPath, request) {
-  return new Promise((resolve, reject) => {
-    const conn = net.connect(socketPath);
-    let buffer = '';
-    let settled = false;
-    const timer = setTimeout(() => fail(new Error('Timed out waiting for daemon response')), 5000);
-
-    function cleanup() {
-      clearTimeout(timer);
-      conn.off('connect', onConnect);
-      conn.off('data', onData);
-      conn.off('error', fail);
-      conn.off('end', onEnd);
-      conn.off('close', onClose);
-    }
-
-    function finish(response) {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      conn.end();
-      resolve(response);
-    }
-
-    function fail(error) {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      conn.destroy();
-      reject(error);
-    }
-
-    function onConnect() {
-      conn.write(JSON.stringify(request) + '\n');
-    }
-
-    function onData(chunk) {
+async function sendDaemonCommand(socketPath, request) {
+  const conn = net.connect(socketPath);
+  let buffer = '';
+  try {
+    await withTimeout(once(conn, 'connect'), 5000, 'Timed out connecting to daemon');
+    conn.write(JSON.stringify(request) + '\n');
+    while (!buffer.includes('\n')) {
+      const [chunk] = await withTimeout(once(conn, 'data'), 5000, 'Timed out waiting for daemon response');
       buffer += chunk.toString();
-      const newline = buffer.indexOf('\n');
-      if (newline === -1) return;
-      try {
-        finish(JSON.parse(buffer.slice(0, newline)));
-      } catch (error) {
-        fail(error);
-      }
     }
+    return JSON.parse(buffer.slice(0, buffer.indexOf('\n')));
+  } finally {
+    conn.destroy();
+  }
+}
 
-    function onEnd() {
-      fail(new Error('Daemon connection ended before response'));
-    }
-
-    function onClose() {
-      fail(new Error('Daemon connection closed before response'));
-    }
-
-    conn.on('connect', onConnect);
-    conn.on('data', onData);
-    conn.on('error', fail);
-    conn.on('end', onEnd);
-    conn.on('close', onClose);
-  });
+function withTimeout(promise, ms, message) {
+  let timer;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(message)), ms); }),
+  ]).finally(() => clearTimeout(timer));
 }
 
 function runCdp(args, { tempDir, env: overrides = {} }) {
