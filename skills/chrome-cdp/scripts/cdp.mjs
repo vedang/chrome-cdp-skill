@@ -939,9 +939,10 @@ async function runDaemon(browserKey, targetId) {
   // Handle a command
   async function handleCommand({ cmd, args }) {
     resetIdle();
+    const commandName = canonicalCommandName(cmd);
     try {
       let result;
-      switch (cmd) {
+      switch (commandName) {
         case 'list': {
           const pages = await getPages(cdp);
           result = formatPageList(pages);
@@ -952,12 +953,12 @@ async function runDaemon(browserKey, targetId) {
           result = JSON.stringify(pages);
           break;
         }
-        case 'snap': case 'snapshot': result = await snapshotStr(cdp, sessionId, true); break;
+        case 'snapshot': result = await snapshotStr(cdp, sessionId, true); break;
         case 'eval': result = await evalStr(cdp, sessionId, args[0]); break;
-        case 'shot': case 'screenshot': result = await shotStr(cdp, sessionId, args[0], targetId); break;
+        case 'screenshot': result = await shotStr(cdp, sessionId, args[0], targetId); break;
         case 'html': result = await htmlStr(cdp, sessionId, args[0]); break;
-        case 'nav': case 'navigate': result = await navStr(cdp, sessionId, args[0]); break;
-        case 'net': case 'network': result = await netStr(cdp, sessionId); break;
+        case 'navigate': result = await navStr(cdp, sessionId, args[0]); break;
+        case 'network': result = await netStr(cdp, sessionId); break;
         case 'click': result = await clickStr(cdp, sessionId, args[0]); break;
         case 'clickxy': result = await clickXyStr(cdp, sessionId, args[0], args[1]); break;
         case 'type': result = await typeStr(cdp, sessionId, args[0]); break;
@@ -1180,22 +1181,51 @@ DAEMON IPC (for advanced use / scripting)
   The socket disappears after 20 min of inactivity or when the tab closes.
 `;
 
-const NEEDS_TARGET = new Set([
-  'snap','snapshot','eval','shot','screenshot','html','nav','navigate',
-  'net','network','click','clickxy','type','loadall','evalraw',
+const COMMAND_METADATA = Object.freeze([
+  commandMetadata('list', { aliases: ['ls'] }),
+  commandMetadata('snapshot', { aliases: ['snap'], needsTarget: true }),
+  commandMetadata('eval', { needsTarget: true }),
+  commandMetadata('screenshot', { aliases: ['shot'], needsTarget: true }),
+  commandMetadata('html', { needsTarget: true }),
+  commandMetadata('navigate', { aliases: ['nav'], needsTarget: true }),
+  commandMetadata('network', { aliases: ['net'], needsTarget: true }),
+  commandMetadata('click', { needsTarget: true }),
+  commandMetadata('clickxy', { needsTarget: true }),
+  commandMetadata('type', { needsTarget: true }),
+  commandMetadata('loadall', { needsTarget: true }),
+  commandMetadata('evalraw', { needsTarget: true }),
+  commandMetadata('open'),
+  commandMetadata('stop'),
 ]);
-
-const COMMAND_ALIASES = new Map([
-  ['ls', 'list'],
-  ['snap', 'snapshot'],
-  ['shot', 'screenshot'],
-  ['nav', 'navigate'],
-  ['net', 'network'],
-]);
+const COMMAND_METADATA_BY_NAME = new Map(
+  COMMAND_METADATA.flatMap(metadata => [metadata.canonicalName, ...metadata.aliases].map(name => [name, metadata])),
+);
 const FALLBACK_BROWSER_IDS = new Set(['chrome', 'chromium', 'brave', 'edge', 'vivaldi']);
 
-function canonicalCommandName(cmd) {
-  return COMMAND_ALIASES.get(cmd) || cmd;
+function commandMetadata(canonicalName, { aliases = [], needsTarget = false } = {}) {
+  return Object.freeze({ canonicalName, aliases: Object.freeze([...aliases]), needsTarget });
+}
+
+function commandDefinitionFor(cmd) {
+  return COMMAND_METADATA_BY_NAME.get(cmd);
+}
+
+export function commandMetadataFor(cmd) {
+  const metadata = commandDefinitionFor(cmd);
+  if (!metadata) return { canonicalName: cmd, aliases: [], needsTarget: false };
+  return {
+    canonicalName: metadata.canonicalName,
+    aliases: [...metadata.aliases],
+    needsTarget: metadata.needsTarget,
+  };
+}
+
+export function canonicalCommandName(cmd) {
+  return commandDefinitionFor(cmd)?.canonicalName || cmd;
+}
+
+function commandNeedsTarget(cmd) {
+  return commandDefinitionFor(cmd)?.needsTarget === true;
 }
 
 function isLightpandaPageRecord(page) {
@@ -1250,7 +1280,9 @@ async function main() {
     console.log(USAGE); process.exit(0);
   }
 
-  if (cmd === 'list' || cmd === 'ls') {
+  const commandName = canonicalCommandName(cmd);
+
+  if (commandName === 'list') {
     const descriptor = await getBrowserDescriptor();
     const cdp = new CDP();
     await cdp.connect(descriptor.wsUrl);
@@ -1263,7 +1295,7 @@ async function main() {
   }
 
   // Open new tab
-  if (cmd === 'open') {
+  if (commandName === 'open') {
     const url = args[0] || 'about:blank';
     const descriptor = await getBrowserDescriptor();
     const cdp = new CDP();
@@ -1283,13 +1315,13 @@ async function main() {
   }
 
   // Stop
-  if (cmd === 'stop') {
+  if (commandName === 'stop') {
     await stopDaemons(args[0]);
     return;
   }
 
   // Page commands — need target prefix
-  if (!NEEDS_TARGET.has(cmd)) {
+  if (!commandNeedsTarget(cmd)) {
     console.error(`Unknown command: ${cmd}\n`);
     console.log(USAGE);
     process.exit(1);
@@ -1314,27 +1346,27 @@ async function main() {
 
   const cmdArgs = args.slice(1);
 
-  if (cmd === 'eval') {
+  if (commandName === 'eval') {
     const expr = cmdArgs.join(' ');
     if (!expr) { console.error('Error: expression required'); process.exit(1); }
     cmdArgs[0] = expr;
-  } else if (cmd === 'type') {
+  } else if (commandName === 'type') {
     // Join all remaining args as text (allows spaces)
     const text = cmdArgs.join(' ');
     if (!text) { console.error('Error: text required'); process.exit(1); }
     cmdArgs[0] = text;
-  } else if (cmd === 'evalraw') {
+  } else if (commandName === 'evalraw') {
     // args: [method, ...jsonParts] — join json parts in case of spaces
     if (!cmdArgs[0]) { console.error('Error: CDP method required'); process.exit(1); }
     if (cmdArgs.length > 2) cmdArgs[1] = cmdArgs.slice(1).join(' ');
   }
 
-  if ((cmd === 'nav' || cmd === 'navigate') && !cmdArgs[0]) {
+  if (commandName === 'navigate' && !cmdArgs[0]) {
     console.error('Error: URL required');
     process.exit(1);
   }
 
-  const response = await sendCommand(conn, { cmd, args: cmdArgs });
+  const response = await sendCommand(conn, { cmd: commandName, args: cmdArgs });
 
   if (response.ok) {
     if (response.result) console.log(response.result);

@@ -8,7 +8,13 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { CDP, CDPError, isUnsupportedCdpError } from '../skills/chrome-cdp/scripts/cdp.mjs';
+import {
+  CDP,
+  CDPError,
+  canonicalCommandName,
+  commandMetadataFor,
+  isUnsupportedCdpError,
+} from '../skills/chrome-cdp/scripts/cdp.mjs';
 import { createFakeChromeCDPServer } from './support/fake-cdp.mjs';
 
 const TEST_DIR = dirname(fileURLToPath(import.meta.url));
@@ -85,6 +91,33 @@ function assertUnsupported({ method = 'Page.captureScreenshot', code = -32000, m
 function assertSupported({ method = 'Page.captureScreenshot', code = -32000, message, data }) {
   assert.equal(isUnsupportedCdpError(new CDPError(method, { code, message, data })), false, message);
 }
+
+test('canonical command metadata normalizes documented aliases', () => {
+  const aliasPairs = new Map([
+    ['ls', 'list'],
+    ['snap', 'snapshot'],
+    ['shot', 'screenshot'],
+    ['nav', 'navigate'],
+    ['net', 'network'],
+  ]);
+
+  for (const [alias, canonical] of aliasPairs) {
+    assert.equal(canonicalCommandName(alias), canonical);
+    assert.equal(canonicalCommandName(canonical), canonical);
+
+    const aliasMetadata = commandMetadataFor(alias);
+    assert.equal(aliasMetadata.canonicalName, canonical);
+    assert.equal(aliasMetadata.needsTarget, canonical !== 'list');
+    assert.equal(aliasMetadata.aliases.includes(alias), true);
+    assert.deepEqual(aliasMetadata, commandMetadataFor(canonical));
+  }
+
+  assert.deepEqual(commandMetadataFor('eval'), {
+    canonicalName: 'eval',
+    aliases: [],
+    needsTarget: true,
+  });
+});
 
 test('daemon responses include CDP error metadata for failed page commands', async () => {
   const tempDir = await mkdtemp(join(shortTmpRoot(), 'cdp-daemon-error-metadata-'));
