@@ -178,6 +178,17 @@ function getDisplayPrefixLength(targetIds) {
 // CDP WebSocket client
 // ---------------------------------------------------------------------------
 
+class CDPError extends Error {
+  constructor(method, error = {}, sessionId) {
+    super(String(error.message || `CDP error: ${method}`));
+    this.name = 'CDPError';
+    this.method = method;
+    this.code = error.code;
+    this.data = error.data;
+    this.sessionId = sessionId;
+  }
+}
+
 class CDP {
   #ws; #id = 0; #pending = new Map(); #eventHandlers = new Map(); #closeHandlers = [];
 
@@ -190,9 +201,10 @@ class CDP {
       this.#ws.onmessage = (ev) => {
         const msg = JSON.parse(ev.data);
         if (msg.id && this.#pending.has(msg.id)) {
-          const { resolve, reject } = this.#pending.get(msg.id);
+          const pending = this.#pending.get(msg.id);
+          const { resolve, reject, method, sessionId } = pending;
           this.#pending.delete(msg.id);
-          if (msg.error) reject(new Error(msg.error.message));
+          if (msg.error) reject(new CDPError(method, msg.error, sessionId));
           else resolve(msg.result);
         } else if (msg.method && this.#eventHandlers.has(msg.method)) {
           for (const handler of [...this.#eventHandlers.get(msg.method)]) {
@@ -206,7 +218,7 @@ class CDP {
   send(method, params = {}, sessionId) {
     const id = ++this.#id;
     return new Promise((resolve, reject) => {
-      this.#pending.set(id, { resolve, reject });
+      this.#pending.set(id, { resolve, reject, method, sessionId });
       const msg = { id, method, params };
       if (sessionId) msg.sessionId = sessionId;
       this.#ws.send(JSON.stringify(msg));
@@ -261,6 +273,27 @@ class CDP {
 
   onClose(handler) { this.#closeHandlers.push(handler); }
   close() { this.#ws.close(); }
+}
+
+const UNSUPPORTED_CDP_ERROR_PATTERNS = [
+  'method not found',
+  'unknown method',
+  'not implemented',
+  'unsupported',
+];
+
+function isUnsupportedCdpError(error) {
+  if (!(error instanceof CDPError)) return false;
+  if (error.code === -32601) return true;
+  const text = [error.message, formatErrorData(error.data)].filter(Boolean).join(' ').toLowerCase();
+  return UNSUPPORTED_CDP_ERROR_PATTERNS.some(pattern => text.includes(pattern));
+}
+
+function formatErrorData(data) {
+  if (data == null) return '';
+  if (typeof data === 'string') return data;
+  try { return JSON.stringify(data); }
+  catch { return String(data); }
 }
 
 // ---------------------------------------------------------------------------
@@ -626,7 +659,14 @@ async function runDaemon(targetId) {
       }
       return { ok: true, result: result ?? '' };
     } catch (e) {
-      return { ok: false, error: e.message };
+      const response = { ok: false, error: e.message };
+      if (e instanceof CDPError) {
+        response.errorCode = e.code;
+        response.errorMethod = e.method;
+        response.errorData = e.data;
+      }
+      if (isUnsupportedCdpError(e)) response.unsupportedMethod = e.method;
+      return response;
     }
   }
 
@@ -840,6 +880,61 @@ const NEEDS_TARGET = new Set([
   'net','network','click','clickxy','type','loadall','evalraw',
 ]);
 
+const COMMAND_CANONICAL_NAMES = new Map([
+  ['ls', 'list'], ['list', 'list'],
+  ['snap', 'snapshot'], ['snapshot', 'snapshot'],
+  ['shot', 'screenshot'], ['screenshot', 'screenshot'],
+  ['nav', 'navigate'], ['navigate', 'navigate'],
+  ['net', 'network'], ['network', 'network'],
+]);
+const FALLBACK_BROWSER_IDS = new Set(['chrome', 'chromium', 'brave', 'edge', 'vivaldi']);
+
+function canonicalCommandName(cmd) {
+  return COMMAND_CANONICAL_NAMES.get(cmd) || cmd;
+}
+
+function isLightpandaPrimaryBrowser() {
+  return (process.env.CDP_BROWSER || '').toLowerCase() === 'lightpanda';
+}
+
+function fallbackBrowserSuggestion() {
+  const requested = (process.env.CDP_FALLBACK_BROWSER || 'chrome').trim().toLowerCase();
+  if (requested === 'none') return null;
+  return FALLBACK_BROWSER_IDS.has(requested) ? requested : 'chrome';
+}
+
+function formatCdpErrorSummary(response) {
+  const parts = [];
+  if (response.errorCode != null) parts.push(String(response.errorCode));
+  if (response.error) parts.push(response.error);
+  return parts.length ? ` (${parts.join(' ')})` : '';
+}
+
+function formatLightpandaFallbackPrompt({ cmd, targetPrefix, targetId, page, response }) {
+  const failedMethod = response.unsupportedMethod || response.errorMethod || '<unknown>';
+  const suggestion = fallbackBrowserSuggestion();
+  const nextBrowser = suggestion || '<approved fallback browser>';
+  const lines = [
+    'LIGHTPANDA_UNSUPPORTED_FALLBACK_REQUIRED',
+    `Command: ${[cmd, targetPrefix].filter(Boolean).join(' ')}`,
+    `Normalized command: ${canonicalCommandName(cmd)}`,
+    `Target: ${targetId || targetPrefix || '<unknown>'}`,
+    `Failed CDP method: ${failedMethod}${formatCdpErrorSummary(response)}`,
+    `Primary browser: lightpanda`,
+    `Primary URL: ${page?.url || '<unknown>'}`,
+  ];
+  if (response.errorData != null) lines.push(`CDP error data: ${formatErrorData(response.errorData)}`);
+  if (suggestion) lines.push(`Suggested fallback browser: ${suggestion}`);
+  lines.push(
+    '',
+    'Lightpanda does not support this operation. chrome-cdp did not run fallback automatically.',
+    'Fallback browser may not have the same state: cookies, login, localStorage, DOM mutations, typed text, JS heap, or in-page workflow may differ.',
+    '',
+    'Ask the user before fallback execution. If approved, enable remote debugging in the fallback browser, run cdp list/open there, then rerun this command with CDP_BROWSER=' + nextBrowser + '.',
+  );
+  return lines.join('\n');
+}
+
 async function main() {
   const [cmd, ...args] = process.argv.slice(2);
 
@@ -905,6 +1000,7 @@ async function main() {
   }
   const pages = JSON.parse(readFileSync(PAGES_CACHE, 'utf8'));
   const targetId = resolvePrefix(targetPrefix, pages.map(p => p.targetId), 'target', 'Run "cdp list".');
+  const page = pages.find(p => p.targetId === targetId);
 
   const conn = await getOrStartTabDaemon(targetId);
 
@@ -934,6 +1030,9 @@ async function main() {
 
   if (response.ok) {
     if (response.result) console.log(response.result);
+  } else if (isLightpandaPrimaryBrowser() && response.unsupportedMethod) {
+    console.error(formatLightpandaFallbackPrompt({ cmd, targetPrefix, targetId, page, response }));
+    process.exitCode = 1;
   } else {
     console.error('Error:', response.error);
     process.exitCode = 1;
