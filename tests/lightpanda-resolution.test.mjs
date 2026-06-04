@@ -126,6 +126,21 @@ test('CDP_LIGHTPANDA_URL takes precedence over host/port', async () => {
   });
 });
 
+test('CDP_BROWSER=lightpanda accepts a Lightpanda User-Agent when Browser product differs', async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), 'cdp-lightpanda-user-agent-'));
+
+  await createFakeChromeCDPServer({
+    userAgent: 'Lightpanda/0.1.0',
+    targets: [fakePage('lightpanda-user-agent-0001', 'Lightpanda User-Agent Page', 'https://lightpanda-user-agent.test/')],
+  }).using(async (server) => {
+    const result = await runLightpandaList(tempDir, { CDP_LIGHTPANDA_URL: server.httpUrl });
+
+    assertListSucceeded(result, /Lightpanda User-Agent Page/);
+    assertVersionRequests(server);
+    assertGotTargets(server);
+  });
+});
+
 test('CDP_BROWSER=lightpanda rejects a non-Lightpanda /json/version product', async () => {
   const tempDir = await mkdtemp(join(tmpdir(), 'cdp-lightpanda-reject-'));
 
@@ -137,6 +152,23 @@ test('CDP_BROWSER=lightpanda rejects a non-Lightpanda /json/version product', as
     assert.match(result.stderr, /Chrome\/126\.0\.0\.0/);
     assertVersionRequests(server);
     assert.equal(server.connectionLog.length, 0, 'product validation must fail before WebSocket connection');
+  });
+});
+
+test('CDP_BROWSER=lightpanda rejects Lightpanda product near-misses', async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), 'cdp-lightpanda-near-miss-'));
+
+  await createFakeLightpandaCDPServer({
+    browserProduct: 'LightpandaBrowser/1.0.0',
+    userAgent: 'Mozilla/5.0 Chrome/126.0.0.0',
+  }).using(async (server) => {
+    const result = await runLightpandaList(tempDir, { CDP_LIGHTPANDA_URL: server.httpUrl });
+
+    assert.notEqual(result.code, 0);
+    assert.match(result.stderr, /Expected Lightpanda CDP endpoint/);
+    assert.match(result.stderr, /LightpandaBrowser\/1\.0\.0/);
+    assertVersionRequests(server);
+    assert.equal(server.connectionLog.length, 0, 'near-miss validation must fail before WebSocket connection');
   });
 });
 
