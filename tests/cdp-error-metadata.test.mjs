@@ -14,6 +14,7 @@ import {
   canonicalCommandName,
   cdpMethodsForCommand,
   commandMetadataFor,
+  fallbackBrowserConfig,
   isUnsupportedCdpError,
 } from '../skills/chrome-cdp/scripts/cdp.mjs';
 import { createFakeChromeCDPServer } from './support/fake-cdp.mjs';
@@ -29,6 +30,7 @@ const SCREENSHOT_CDP_METHODS = [
   'Page.captureScreenshot',
 ];
 const NAVIGATE_CDP_METHODS = ['Page.enable', 'Page.navigate', ...RUNTIME_EVALUATE_METHODS];
+const FALLBACK_BROWSER_VALUES = ['chrome', 'chromium', 'brave', 'edge', 'vivaldi', 'none'];
 
 test('CDPError preserves protocol metadata from failed send', async () => {
   await createFakeChromeCDPServer({
@@ -152,6 +154,32 @@ test('command metadata maps commands to CDP methods they may call', () => {
 
   assert.deepEqual(cdpMethodsForCommand('evalraw', ['DOM.getDocument', '{}']), ['DOM.getDocument']);
   assert.deepEqual(cdpMethodsForCommand('evalraw'), []);
+});
+
+test('fallback browser config recognizes documented env values', () => {
+  assert.deepEqual(fallbackBrowserConfig({}), {
+    browserId: 'chrome',
+    portFile: undefined,
+    host: '127.0.0.1',
+    supportedBrowserValues: FALLBACK_BROWSER_VALUES,
+  });
+
+  for (const browserId of FALLBACK_BROWSER_VALUES.filter(browserId => browserId !== 'none')) {
+    assert.equal(fallbackBrowserConfig({ CDP_FALLBACK_BROWSER: browserId }).browserId, browserId);
+  }
+
+  assert.deepEqual(fallbackBrowserConfig({
+    CDP_FALLBACK_BROWSER: ' BRAVE ',
+    CDP_FALLBACK_PORT_FILE: '/tmp/fallback/DevToolsActivePort',
+    CDP_FALLBACK_HOST: '0.0.0.0',
+  }), {
+    browserId: 'brave',
+    portFile: '/tmp/fallback/DevToolsActivePort',
+    host: '0.0.0.0',
+    supportedBrowserValues: FALLBACK_BROWSER_VALUES,
+  });
+  assert.equal(fallbackBrowserConfig({ CDP_FALLBACK_BROWSER: 'none' }).browserId, null);
+  assert.equal(fallbackBrowserConfig({ CDP_FALLBACK_BROWSER: 'firefox' }).browserId, 'chrome');
 });
 
 test('daemon responses include CDP error metadata for failed page commands', async () => {

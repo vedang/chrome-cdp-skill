@@ -35,6 +35,10 @@ try { mkdirSync(RUNTIME_DIR, { recursive: true, mode: 0o700 }); } catch {}
 const PAGES_CACHE = resolve(RUNTIME_DIR, 'pages.json');
 const PAGES_CACHE_VERSION = 2;
 const CHROME_FAMILY_BROWSER_IDS = new Set(['auto', 'chrome', 'chromium', 'brave', 'edge', 'vivaldi']);
+const FALLBACK_BROWSER_IDS = new Set(['chrome', 'chromium', 'brave', 'edge', 'vivaldi']);
+const DEFAULT_FALLBACK_BROWSER_ID = 'chrome';
+const DISABLED_FALLBACK_BROWSER_SUGGESTION = 'none';
+const SUPPORTED_FALLBACK_BROWSER_VALUES = Object.freeze([...FALLBACK_BROWSER_IDS, DISABLED_FALLBACK_BROWSER_SUGGESTION]);
 const SUPPORTED_CDP_BROWSER_VALUES = [...CHROME_FAMILY_BROWSER_IDS, 'lightpanda'].join(', ');
 const CHROME_FAMILY_PROFILE_ORDER = {
   mac: ['chrome', 'chromium', 'brave', 'edge'],
@@ -159,10 +163,11 @@ function resolveChromeFamilyEndpoint(browserId = 'auto', role = 'primary') {
 
 function chromeFamilyRoleConfig(role) {
   if (role === 'fallback') {
+    const config = fallbackBrowserConfig();
     return {
-      portFile: process.env.CDP_FALLBACK_PORT_FILE,
+      portFile: config.portFile,
       portFileEnv: 'CDP_FALLBACK_PORT_FILE',
-      host: process.env.CDP_FALLBACK_HOST || '127.0.0.1',
+      host: config.host,
     };
   }
   return {
@@ -1210,7 +1215,6 @@ const COMMAND_METADATA = Object.freeze([
 const COMMAND_METADATA_BY_NAME = new Map(
   COMMAND_METADATA.flatMap(metadata => [metadata.canonicalName, ...metadata.aliases].map(name => [name, metadata])),
 );
-const FALLBACK_BROWSER_IDS = new Set(['chrome', 'chromium', 'brave', 'edge', 'vivaldi']);
 
 function commandMetadata(canonicalName, { aliases = [], needsTarget = false, cdpMethods = [] } = {}) {
   return Object.freeze({
@@ -1253,10 +1257,23 @@ function isLightpandaPageRecord(page) {
   return page?.browserKind === 'lightpanda' || page?.browserId === 'lightpanda';
 }
 
+export function fallbackBrowserConfig(env = process.env) {
+  return {
+    browserId: normalizeFallbackBrowserId(env.CDP_FALLBACK_BROWSER),
+    portFile: env.CDP_FALLBACK_PORT_FILE || undefined,
+    host: env.CDP_FALLBACK_HOST || '127.0.0.1',
+    supportedBrowserValues: [...SUPPORTED_FALLBACK_BROWSER_VALUES],
+  };
+}
+
+function normalizeFallbackBrowserId(value) {
+  const requested = String(value ?? DEFAULT_FALLBACK_BROWSER_ID).trim().toLowerCase() || DEFAULT_FALLBACK_BROWSER_ID;
+  if (requested === DISABLED_FALLBACK_BROWSER_SUGGESTION) return null;
+  return FALLBACK_BROWSER_IDS.has(requested) ? requested : DEFAULT_FALLBACK_BROWSER_ID;
+}
+
 function fallbackBrowserSuggestion() {
-  const requested = (process.env.CDP_FALLBACK_BROWSER || 'chrome').trim().toLowerCase();
-  if (requested === 'none') return null;
-  return FALLBACK_BROWSER_IDS.has(requested) ? requested : 'chrome';
+  return fallbackBrowserConfig().browserId;
 }
 
 function formatCdpErrorSummary(response) {
