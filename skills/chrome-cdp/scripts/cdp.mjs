@@ -110,15 +110,10 @@ function resolveChromeFamilyBrowser(browserId = 'auto', role = 'primary') {
 }
 
 async function resolveLightpandaBrowser() {
-  let source = 'CDP_LIGHTPANDA_HOST/CDP_LIGHTPANDA_PORT';
-  if (process.env.CDP_LIGHTPANDA_WS_URL) source = 'CDP_LIGHTPANDA_WS_URL';
-  else if (process.env.CDP_LIGHTPANDA_URL) source = 'CDP_LIGHTPANDA_URL';
-
   return makeBrowserDescriptor({
     browserId: 'lightpanda',
     browserKind: 'lightpanda',
-    wsUrl: await resolveLightpandaWsUrl(),
-    source,
+    ...await resolveLightpandaEndpoint(),
   });
 }
 
@@ -222,14 +217,23 @@ function readDevToolsPortFile(portFile, host = '127.0.0.1') {
   return `ws://${host}:${lines[0]}${lines[1]}`;
 }
 
-async function resolveLightpandaWsUrl() {
+async function resolveLightpandaEndpoint() {
   const explicitWsUrl = process.env.CDP_LIGHTPANDA_WS_URL;
   const httpBaseUrl = explicitWsUrl
     ? httpBaseUrlFromWsUrl(explicitWsUrl)
     : lightpandaHttpBaseUrl();
   const version = await fetchLightpandaVersion(httpBaseUrl);
   validateLightpandaVersion(version);
-  return explicitWsUrl || version.webSocketDebuggerUrl;
+  return {
+    wsUrl: explicitWsUrl || version.webSocketDebuggerUrl,
+    source: lightpandaEndpointSource(),
+  };
+}
+
+function lightpandaEndpointSource() {
+  if (process.env.CDP_LIGHTPANDA_WS_URL) return 'CDP_LIGHTPANDA_WS_URL';
+  if (process.env.CDP_LIGHTPANDA_URL) return 'CDP_LIGHTPANDA_URL';
+  return 'CDP_LIGHTPANDA_HOST/CDP_LIGHTPANDA_PORT';
 }
 
 function lightpandaHttpBaseUrl() {
