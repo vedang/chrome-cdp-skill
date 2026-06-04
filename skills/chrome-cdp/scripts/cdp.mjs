@@ -35,10 +35,10 @@ try { mkdirSync(RUNTIME_DIR, { recursive: true, mode: 0o700 }); } catch {}
 const PAGES_CACHE = resolve(RUNTIME_DIR, 'pages.json');
 const PAGES_CACHE_VERSION = 2;
 const CHROME_FAMILY_BROWSER_IDS = new Set(['auto', 'chrome', 'chromium', 'brave', 'edge', 'vivaldi']);
-const FALLBACK_BROWSER_IDS = new Set(['chrome', 'chromium', 'brave', 'edge', 'vivaldi']);
+const FALLBACK_BROWSER_VALUES = Object.freeze(['chrome', 'chromium', 'brave', 'edge', 'vivaldi']);
+const FALLBACK_BROWSER_IDS = new Set(FALLBACK_BROWSER_VALUES);
 const DEFAULT_FALLBACK_BROWSER_ID = 'chrome';
 const DISABLED_FALLBACK_BROWSER_SUGGESTION = 'none';
-const SUPPORTED_FALLBACK_BROWSER_VALUES = Object.freeze([...FALLBACK_BROWSER_IDS, DISABLED_FALLBACK_BROWSER_SUGGESTION]);
 const SUPPORTED_CDP_BROWSER_VALUES = [...CHROME_FAMILY_BROWSER_IDS, 'lightpanda'].join(', ');
 const CHROME_FAMILY_PROFILE_ORDER = {
   mac: ['chrome', 'chromium', 'brave', 'edge'],
@@ -1262,7 +1262,6 @@ export function fallbackBrowserConfig(env = process.env) {
     browserId: normalizeFallbackBrowserId(env.CDP_FALLBACK_BROWSER),
     portFile: env.CDP_FALLBACK_PORT_FILE || undefined,
     host: env.CDP_FALLBACK_HOST || '127.0.0.1',
-    supportedBrowserValues: [...SUPPORTED_FALLBACK_BROWSER_VALUES],
   };
 }
 
