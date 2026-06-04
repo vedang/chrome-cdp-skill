@@ -15,51 +15,69 @@ const CDP_CLI = join(REPO_ROOT, 'skills/chrome-cdp/scripts/cdp.mjs');
 test('default Chrome-family discovery uses first existing profile DevToolsActivePort', async () => {
   const tempDir = await mkdtemp(join(tmpdir(), 'cdp-chrome-discovery-'));
 
-  await createFakeChromeCDPServer({
-    targets: [{ targetId: 'chrome-first-0001', title: 'First Chrome Page', url: 'https://first-chrome.test/' }],
-  }).using(async (firstServer) => {
-    await createFakeChromeCDPServer({
-      targets: [{ targetId: 'chromium-later-0001', title: 'Later Chromium Page', url: 'https://later-chromium.test/' }],
-    }).using(async (laterServer) => {
-      firstServer.writeDevToolsActivePort(join(tempDir, 'home/Library/Application Support/Google/Chrome/DevToolsActivePort'));
-      laterServer.writeDevToolsActivePort(join(tempDir, 'home/Library/Application Support/Chromium/DevToolsActivePort'));
+  await withFakeChromeServers([
+    { targets: [fakePage('chrome-first-0001', 'First Chrome Page', 'https://first-chrome.test/')] },
+    { targets: [fakePage('chromium-later-0001', 'Later Chromium Page', 'https://later-chromium.test/')] },
+  ], async ([firstServer, laterServer]) => {
+    firstServer.writeDevToolsActivePort(profilePortFile(tempDir, 'Google/Chrome'));
+    laterServer.writeDevToolsActivePort(profilePortFile(tempDir, 'Chromium'));
 
-      const result = await runCdp(['list'], { tempDir });
+    const result = await runCdp(['list'], { tempDir });
 
-      assert.equal(result.code, 0, result.stderr);
-      assert.match(result.stdout, /First Chrome Page/);
-      assert.doesNotMatch(result.stdout, /Later Chromium Page/);
-      assert.equal(firstServer.connectionLog.length, 1);
-      assert.equal(laterServer.connectionLog.length, 0);
-      assert.deepEqual(firstServer.commandLog.map((message) => message.method), ['Target.getTargets']);
-    });
+    assertListShows(result, 'First Chrome Page', 'Later Chromium Page');
+    assertOnlyQueried(firstServer, laterServer);
   });
 });
 
 test('CDP_PORT_FILE remains highest-priority Chrome-family discovery override', async () => {
   const tempDir = await mkdtemp(join(tmpdir(), 'cdp-port-file-discovery-'));
 
-  await createFakeChromeCDPServer({
-    targets: [{ targetId: 'default-chrome-0001', title: 'Default Chrome Page', url: 'https://default-chrome.test/' }],
-  }).using(async (defaultServer) => {
-    await createFakeChromeCDPServer({
-      targets: [{ targetId: 'override-chrome-0001', title: 'Override Chrome Page', url: 'https://override-chrome.test/' }],
-    }).using(async (overrideServer) => {
-      defaultServer.writeDevToolsActivePort(join(tempDir, 'home/Library/Application Support/Google/Chrome/DevToolsActivePort'));
-      const overridePortFile = join(tempDir, 'override/DevToolsActivePort');
-      overrideServer.writeDevToolsActivePort(overridePortFile);
+  await withFakeChromeServers([
+    { targets: [fakePage('default-chrome-0001', 'Default Chrome Page', 'https://default-chrome.test/')] },
+    { targets: [fakePage('override-chrome-0001', 'Override Chrome Page', 'https://override-chrome.test/')] },
+  ], async ([defaultServer, overrideServer]) => {
+    defaultServer.writeDevToolsActivePort(profilePortFile(tempDir, 'Google/Chrome'));
+    const overridePortFile = join(tempDir, 'override/DevToolsActivePort');
+    overrideServer.writeDevToolsActivePort(overridePortFile);
 
-      const result = await runCdp(['list'], { tempDir, env: { CDP_PORT_FILE: overridePortFile } });
+    const result = await runCdp(['list'], { tempDir, env: { CDP_PORT_FILE: overridePortFile } });
 
-      assert.equal(result.code, 0, result.stderr);
-      assert.match(result.stdout, /Override Chrome Page/);
-      assert.doesNotMatch(result.stdout, /Default Chrome Page/);
-      assert.equal(defaultServer.connectionLog.length, 0);
-      assert.equal(overrideServer.connectionLog.length, 1);
-      assert.deepEqual(overrideServer.commandLog.map((message) => message.method), ['Target.getTargets']);
-    });
+    assertListShows(result, 'Override Chrome Page', 'Default Chrome Page');
+    assertOnlyQueried(overrideServer, defaultServer);
   });
 });
+
+async function withFakeChromeServers(serverOptions, callback) {
+  const servers = [];
+  try {
+    for (const options of serverOptions) {
+      servers.push(await createFakeChromeCDPServer(options).start());
+    }
+    return await callback(servers);
+  } finally {
+    await Promise.all(servers.toReversed().map((server) => server.stop()));
+  }
+}
+
+function fakePage(targetId, title, url) {
+  return { targetId, title, url };
+}
+
+function profilePortFile(tempDir, profile) {
+  return join(tempDir, 'home/Library/Application Support', profile, 'DevToolsActivePort');
+}
+
+function assertListShows(result, visibleTitle, hiddenTitle) {
+  assert.equal(result.code, 0, result.stderr);
+  assert.match(result.stdout, new RegExp(visibleTitle));
+  assert.doesNotMatch(result.stdout, new RegExp(hiddenTitle));
+}
+
+function assertOnlyQueried(selectedServer, skippedServer) {
+  assert.equal(selectedServer.connectionLog.length, 1);
+  assert.equal(skippedServer.connectionLog.length, 0);
+  assert.deepEqual(selectedServer.commandLog.map((message) => message.method), ['Target.getTargets']);
+}
 
 function runCdp(args, { tempDir, env: overrides = {} }) {
   return new Promise((resolve, reject) => {
