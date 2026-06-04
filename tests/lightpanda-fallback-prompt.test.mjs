@@ -45,7 +45,11 @@ test('unsupported Lightpanda page command emits fallback approval prompt without
     assert.match(list.stdout, /Unsupported Shot Page/);
 
     const shot = await runCdp(['shot', targetId], { tempDir, env });
-    assertFallbackPrompt(shot);
+    assertFallbackPrompt(shot, {
+      targetId,
+      primaryUrl: 'https://lightpanda-shot.test/workflow',
+      suggestedFallback: 'brave',
+    });
     assertFallbackUntouched(fallback);
   } finally {
     await runCdp(['stop', targetId], {
@@ -53,6 +57,47 @@ test('unsupported Lightpanda page command emits fallback approval prompt without
       env: { ...lightpandaEnv, CDP_LIGHTPANDA_URL: lightpanda.httpUrl },
     }).catch(() => {});
     await fallback.stop();
+    await lightpanda.stop();
+  }
+});
+
+test('unsupported Lightpanda fallback prompt uses cached page record when current env changes', async () => {
+  const tempDir = await mkdtemp(join(shortTmpRoot(), 'cdp-lp-cache-'));
+  const targetId = 'clp-shot-0001';
+  const primaryUrl = 'https://cached-lightpanda-shot.test/workflow';
+
+  const lightpanda = await createFakeLightpandaCDPServer({
+    targets: [fakePage(targetId, 'Cached Lightpanda Shot Page', primaryUrl)],
+    unsupportedMethods: ['Page.captureScreenshot'],
+  }).start();
+  const chrome = await createFakeChromeCDPServer({
+    targets: [fakePage('chrome-current-target-0001', 'Current Chrome Page', 'https://current-chrome.test/')],
+  }).start();
+
+  try {
+    const lightpandaEnv = {
+      CDP_BROWSER: 'lightpanda',
+      CDP_LIGHTPANDA_URL: lightpanda.httpUrl,
+    };
+    const chromeEnv = {
+      CDP_BROWSER: 'chrome',
+      CDP_HOST: chrome.host,
+      CDP_FALLBACK_BROWSER: 'chrome',
+    };
+
+    const list = await runCdp(['list'], { tempDir, env: lightpandaEnv });
+    assert.equal(list.code, 0, list.stderr);
+    assert.match(list.stdout, /Cached Lightpanda Shot Page/);
+
+    const shot = await runCdp(['shot', targetId], { tempDir, env: chromeEnv });
+    assertFallbackPrompt(shot, { targetId, primaryUrl, suggestedFallback: 'chrome' });
+    assertFallbackUntouched(chrome);
+  } finally {
+    await runCdp(['stop', targetId], {
+      tempDir,
+      env: { CDP_BROWSER: 'lightpanda', CDP_LIGHTPANDA_URL: lightpanda.httpUrl },
+    }).catch(() => {});
+    await chrome.stop();
     await lightpanda.stop();
   }
 });
@@ -65,16 +110,16 @@ function shortTmpRoot() {
   return process.platform === 'win32' ? tmpdir() : '/tmp';
 }
 
-function assertFallbackPrompt(result) {
+function assertFallbackPrompt(result, { targetId, primaryUrl, suggestedFallback }) {
   assert.notEqual(result.code, 0);
   assert.equal(result.stdout, '');
   assert.match(result.stderr, /LIGHTPANDA_UNSUPPORTED_FALLBACK_REQUIRED/);
   assert.match(result.stderr, /Command: shot/);
   assert.match(result.stderr, /Normalized command: screenshot/);
-  assert.match(result.stderr, /Target: lightshot-target-0001/);
+  assert.equal(result.stderr.includes(`Target: ${targetId}`), true);
   assert.match(result.stderr, /Failed CDP method: Page\.captureScreenshot \(-32601 Method not found\)/);
-  assert.match(result.stderr, /Primary URL: https:\/\/lightpanda-shot\.test\/workflow/);
-  assert.match(result.stderr, /Suggested fallback browser: brave/);
+  assert.equal(result.stderr.includes(`Primary URL: ${primaryUrl}`), true);
+  assert.equal(result.stderr.includes(`Suggested fallback browser: ${suggestedFallback}`), true);
   assert.match(result.stderr, /did not run fallback automatically/);
   assert.match(result.stderr, /cookies, login, localStorage, DOM mutations, typed text, JS heap, or in-page workflow may differ/);
   assert.match(result.stderr, /Ask the user before fallback execution/);

@@ -1160,8 +1160,8 @@ function canonicalCommandName(cmd) {
   return COMMAND_ALIASES.get(cmd) || cmd;
 }
 
-function isLightpandaPrimaryBrowser() {
-  return primaryBrowserId() === 'lightpanda';
+function isLightpandaPageRecord(page) {
+  return page?.browserKind === 'lightpanda' || page?.browserId === 'lightpanda';
 }
 
 function fallbackBrowserSuggestion() {
@@ -1187,7 +1187,7 @@ function formatLightpandaFallbackPrompt({ cmd, targetPrefix, targetId, page, res
     `Normalized command: ${canonicalCommandName(cmd)}`,
     `Target: ${targetId || targetPrefix || '<unknown>'}`,
     `Failed CDP method: ${failedMethod}${formatCdpErrorSummary(response)}`,
-    `Primary browser: lightpanda`,
+    `Primary browser: ${page?.browserId || 'lightpanda'}`,
     `Primary URL: ${page?.url || '<unknown>'}`,
   ];
   if (response.errorData != null) lines.push(`CDP error data: ${formatErrorData(response.errorData)}`);
@@ -1300,7 +1300,7 @@ async function main() {
 
   if (response.ok) {
     if (response.result) console.log(response.result);
-  } else if (isLightpandaPrimaryBrowser() && response.unsupportedMethod) {
+  } else if (isLightpandaPageRecord(page) && response.unsupportedMethod) {
     console.error(formatLightpandaFallbackPrompt({ cmd, targetPrefix, targetId, page, response }));
     process.exitCode = 1;
   } else {
