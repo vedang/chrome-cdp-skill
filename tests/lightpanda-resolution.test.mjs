@@ -213,21 +213,9 @@ test('supported Lightpanda page commands run through cached daemon descriptor', 
     try {
       assertCdpOk(await runCdp(['list'], { tempDir, env: lightpandaEnv }));
 
-      const evalResult = await runCdp(['eval', targetId, 'document.title'], { tempDir });
-      assertCdpOk(evalResult);
-      assert.match(evalResult.stdout, /Lightpanda Daemon Page/);
-
-      const htmlResult = await runCdp(['html', targetId], { tempDir });
-      assertCdpOk(htmlResult);
-      assert.match(htmlResult.stdout, /daemon ok/);
-
-      const snapshotResult = await runCdp(['snap', targetId], { tempDir });
-      assertCdpOk(snapshotResult);
-      assert.match(snapshotResult.stdout, /\[RootWebArea\] Lightpanda Daemon Page/);
-
-      const navResult = await runCdp(['nav', targetId, 'https://lightpanda-nav.test/'], { tempDir });
-      assertCdpOk(navResult);
-      assert.match(navResult.stdout, /Navigated to https:\/\/lightpanda-nav\.test\//);
+      for (const command of supportedLightpandaPageCommands(targetId)) {
+        await assertCdpOutput(command.args, { tempDir }, command.stdout);
+      }
 
       assertVersionRequests(server);
       assert.equal(server.connectionLog.length, 2, 'list uses one browser connection and page commands reuse one daemon connection');
@@ -256,6 +244,15 @@ function fakePage(targetId, title, url) {
   return { targetId, title, url };
 }
 
+function supportedLightpandaPageCommands(targetId) {
+  return [
+    { args: ['eval', targetId, 'document.title'], stdout: /Lightpanda Daemon Page/ },
+    { args: ['html', targetId], stdout: /daemon ok/ },
+    { args: ['snap', targetId], stdout: /\[RootWebArea\] Lightpanda Daemon Page/ },
+    { args: ['nav', targetId, 'https://lightpanda-nav.test/'], stdout: /Navigated to https:\/\/lightpanda-nav\.test\// },
+  ];
+}
+
 function shortTmpRoot() {
   return process.platform === 'win32' ? tmpdir() : '/tmp';
 }
@@ -281,6 +278,12 @@ function assertCdpOk(result) {
 function assertListSucceeded(result, titlePattern) {
   assertCdpOk(result);
   assert.match(result.stdout, titlePattern);
+}
+
+async function assertCdpOutput(args, options, stdoutPattern) {
+  const result = await runCdp(args, options);
+  assertCdpOk(result);
+  assert.match(result.stdout, stdoutPattern);
 }
 
 function assertGotTargets(server) {
