@@ -158,22 +158,7 @@ test('daemon starts from cached page browserKey when current env cannot resolve 
       env: { CDP_PORT_FILE: portFile, CDP_HOST: pageServer.host },
     }));
 
-    const cache = await readPagesCache(tempDir);
-    const pageBrowserKey = cache.pages[0].browserKey;
-    const decoyBrowserKey = 'chrome-decoy000001';
-    await writeFile(pagesCachePath(tempDir), JSON.stringify({
-      ...cache,
-      primaryBrowserKey: decoyBrowserKey,
-      browsers: {
-        [decoyBrowserKey]: {
-          browserId: 'chrome',
-          browserKind: 'chrome-family',
-          wsUrl: decoyServer.wsUrl,
-          source: 'test-decoy',
-        },
-        [pageBrowserKey]: cache.browsers[pageBrowserKey],
-      },
-    }));
+    await rewritePrimaryBrowserToDecoy(tempDir, decoyServer);
 
     assertCdpOk(await runCdp(['eval', targetId, '99'], { tempDir }));
 
@@ -183,8 +168,7 @@ test('daemon starts from cached page browserKey when current env cannot resolve 
       'Runtime.enable',
       'Runtime.evaluate',
     ]);
-    assert.equal(decoyServer.connectionLog.length, 0, 'daemon must not connect to primaryBrowserKey decoy');
-    assert.equal(decoyServer.commandLog.length, 0, 'daemon must not send commands to primaryBrowserKey decoy');
+    assertNoContact(decoyServer, 'primaryBrowserKey decoy');
   } finally {
     await ignoreFailure(runCdp(['stop', targetId], { tempDir }));
     await decoyServer.stop();
@@ -292,6 +276,30 @@ async function writeOldPagesCache(tempDir, pages) {
   const path = pagesCachePath(tempDir);
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, JSON.stringify(pages));
+}
+
+async function rewritePrimaryBrowserToDecoy(tempDir, decoyServer) {
+  const cache = await readPagesCache(tempDir);
+  const pageBrowserKey = cache.pages[0].browserKey;
+  const decoyBrowserKey = 'chrome-decoy000001';
+  await writeFile(pagesCachePath(tempDir), JSON.stringify({
+    ...cache,
+    primaryBrowserKey: decoyBrowserKey,
+    browsers: {
+      [decoyBrowserKey]: {
+        browserId: 'chrome',
+        browserKind: 'chrome-family',
+        wsUrl: decoyServer.wsUrl,
+        source: 'test-decoy',
+      },
+      [pageBrowserKey]: cache.browsers[pageBrowserKey],
+    },
+  }));
+}
+
+function assertNoContact(server, label) {
+  assert.equal(server.connectionLog.length, 0, `${label} must receive no WebSocket connections`);
+  assert.equal(server.commandLog.length, 0, `${label} must receive no CDP commands`);
 }
 
 function commandMethods(server) {
