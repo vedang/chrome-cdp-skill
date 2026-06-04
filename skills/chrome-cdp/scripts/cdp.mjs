@@ -325,20 +325,24 @@ function cachePageRecord(page, descriptor) {
   };
 }
 
+function pagesCacheV2(primaryBrowserKey, browsers, pages) {
+  return { version: PAGES_CACHE_VERSION, primaryBrowserKey, browsers, pages };
+}
+
 function makePagesCache(descriptor, pages) {
-  return {
-    version: PAGES_CACHE_VERSION,
-    primaryBrowserKey: descriptor.browserKey,
-    browsers: { [descriptor.browserKey]: cacheBrowserDescriptor(descriptor) },
-    pages: pages.map(page => cachePageRecord(page, descriptor)),
-  };
+  const browserKey = descriptor.browserKey;
+  return pagesCacheV2(
+    browserKey,
+    { [browserKey]: cacheBrowserDescriptor(descriptor) },
+    pages.map(page => cachePageRecord(page, descriptor)),
+  );
 }
 
 function writePagesCache(descriptor, pages) {
-  writePagesCacheObject(makePagesCache(descriptor, pages));
+  writeNormalizedPagesCache(makePagesCache(descriptor, pages));
 }
 
-function writePagesCacheObject(cache) {
+function writeNormalizedPagesCache(cache) {
   writeFileSync(PAGES_CACHE, JSON.stringify(normalizePagesCache(cache)), { mode: 0o600 });
 }
 
@@ -382,7 +386,7 @@ function normalizePagesCache(raw, currentDescriptor) {
     };
   }).filter(page => page.targetId && page.browserKey);
 
-  return { version: PAGES_CACHE_VERSION, primaryBrowserKey, browsers, pages: normalizedPages };
+  return pagesCacheV2(primaryBrowserKey, browsers, normalizedPages);
 }
 
 function readPagesCache(currentDescriptor) {
@@ -398,7 +402,7 @@ async function readPagesCacheForPageCommand() {
     throw new Error(`Old pages cache cannot be used without current browser descriptor (${error.message}). Run "cdp list" again.`);
   }
   const cache = normalizePagesCache(raw, descriptor);
-  writePagesCacheObject(cache);
+  writeNormalizedPagesCache(cache);
   return cache;
 }
 
