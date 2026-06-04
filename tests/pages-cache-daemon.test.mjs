@@ -43,6 +43,28 @@ test('list writes browser-aware v2 pages cache with browser metadata', async () 
   });
 });
 
+test('browser keys remain stable for the same Chrome-family endpoint', async () => {
+  const tempDir = await mkdtemp(join(shortTmpRoot(), 'cdp-stable-browser-key-'));
+  const targetId = 'stable-key-target-0001';
+
+  await createFakeChromeCDPServer({
+    targets: [fakePage(targetId, 'Stable Key Page', 'https://stable-key.test/')],
+  }).using(async (server) => {
+    const portFile = join(tempDir, 'chrome/DevToolsActivePort');
+    server.writeDevToolsActivePort(portFile);
+    const env = { CDP_PORT_FILE: portFile, CDP_HOST: server.host };
+
+    assertCdpOk(await runCdp(['list'], { tempDir, env }));
+    const firstCache = await readPagesCache(tempDir);
+    assertCdpOk(await runCdp(['list'], { tempDir, env }));
+    const secondCache = await readPagesCache(tempDir);
+
+    assert.equal(firstCache.primaryBrowserKey, secondCache.primaryBrowserKey);
+    assert.equal(firstCache.pages[0].browserKey, secondCache.pages[0].browserKey);
+    assert.match(firstCache.primaryBrowserKey, /^chrome-[0-9a-f]{12}$/);
+  });
+});
+
 test('old array-shaped pages cache remains usable for page commands', async () => {
   const tempDir = await mkdtemp(join(shortTmpRoot(), 'cdp-old-cache-'));
   const targetId = 'old-cache-target-0001';

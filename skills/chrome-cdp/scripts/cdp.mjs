@@ -29,23 +29,60 @@ const RUNTIME_DIR = IS_WINDOWS
     : resolve(homedir(), '.cache', 'cdp');
 try { mkdirSync(RUNTIME_DIR, { recursive: true, mode: 0o700 }); } catch {}
 const PAGES_CACHE = resolve(RUNTIME_DIR, 'pages.json');
+const CHROME_FAMILY_BROWSER_IDS = new Set(['auto', 'chrome', 'chromium', 'brave', 'edge', 'vivaldi']);
+const CHROME_FAMILY_MAC_PROFILES_BY_BROWSER = {
+  chrome: ['Google/Chrome', 'Google/Chrome Beta', 'Google/Chrome for Testing'],
+  chromium: ['Chromium'],
+  brave: ['BraveSoftware/Brave-Browser'],
+  edge: ['Microsoft Edge'],
+  vivaldi: [],
+};
 const CHROME_FAMILY_MAC_PROFILES = [
-  'Google/Chrome', 'Google/Chrome Beta', 'Google/Chrome for Testing',
-  'Chromium', 'BraveSoftware/Brave-Browser', 'Microsoft Edge',
+  ...CHROME_FAMILY_MAC_PROFILES_BY_BROWSER.chrome,
+  ...CHROME_FAMILY_MAC_PROFILES_BY_BROWSER.chromium,
+  ...CHROME_FAMILY_MAC_PROFILES_BY_BROWSER.brave,
+  ...CHROME_FAMILY_MAC_PROFILES_BY_BROWSER.edge,
 ];
+const CHROME_FAMILY_LINUX_PROFILES_BY_BROWSER = {
+  chrome: ['google-chrome', 'google-chrome-beta'],
+  chromium: ['chromium'],
+  vivaldi: ['vivaldi', 'vivaldi-snapshot'],
+  brave: ['BraveSoftware/Brave-Browser'],
+  edge: ['microsoft-edge'],
+};
 const CHROME_FAMILY_LINUX_PROFILES = [
-  'google-chrome', 'google-chrome-beta', 'chromium',
-  'vivaldi', 'vivaldi-snapshot',
-  'BraveSoftware/Brave-Browser', 'microsoft-edge',
+  ...CHROME_FAMILY_LINUX_PROFILES_BY_BROWSER.chrome,
+  ...CHROME_FAMILY_LINUX_PROFILES_BY_BROWSER.chromium,
+  ...CHROME_FAMILY_LINUX_PROFILES_BY_BROWSER.vivaldi,
+  ...CHROME_FAMILY_LINUX_PROFILES_BY_BROWSER.brave,
+  ...CHROME_FAMILY_LINUX_PROFILES_BY_BROWSER.edge,
 ];
+const CHROME_FAMILY_FLATPAK_PROFILES_BY_BROWSER = {
+  chromium: [['org.chromium.Chromium', 'chromium']],
+  chrome: [['com.google.Chrome', 'google-chrome']],
+  brave: [['com.brave.Browser', 'BraveSoftware/Brave-Browser']],
+  edge: [['com.microsoft.Edge', 'microsoft-edge']],
+  vivaldi: [['com.vivaldi.Vivaldi', 'vivaldi']],
+};
 const CHROME_FAMILY_FLATPAK_PROFILES = [
-  ['org.chromium.Chromium', 'chromium'],
-  ['com.google.Chrome', 'google-chrome'],
-  ['com.brave.Browser', 'BraveSoftware/Brave-Browser'],
-  ['com.microsoft.Edge', 'microsoft-edge'],
-  ['com.vivaldi.Vivaldi', 'vivaldi'],
+  ...CHROME_FAMILY_FLATPAK_PROFILES_BY_BROWSER.chromium,
+  ...CHROME_FAMILY_FLATPAK_PROFILES_BY_BROWSER.chrome,
+  ...CHROME_FAMILY_FLATPAK_PROFILES_BY_BROWSER.brave,
+  ...CHROME_FAMILY_FLATPAK_PROFILES_BY_BROWSER.edge,
+  ...CHROME_FAMILY_FLATPAK_PROFILES_BY_BROWSER.vivaldi,
 ];
-const CHROME_FAMILY_WINDOWS_PROFILES = ['Google/Chrome', 'BraveSoftware/Brave-Browser', 'Microsoft/Edge'];
+const CHROME_FAMILY_WINDOWS_PROFILES_BY_BROWSER = {
+  chrome: ['Google/Chrome'],
+  chromium: [],
+  brave: ['BraveSoftware/Brave-Browser'],
+  edge: ['Microsoft/Edge'],
+  vivaldi: [],
+};
+const CHROME_FAMILY_WINDOWS_PROFILES = [
+  ...CHROME_FAMILY_WINDOWS_PROFILES_BY_BROWSER.chrome,
+  ...CHROME_FAMILY_WINDOWS_PROFILES_BY_BROWSER.brave,
+  ...CHROME_FAMILY_WINDOWS_PROFILES_BY_BROWSER.edge,
+];
 
 function safeSocketPart(value) {
   return String(value || 'unknown').replace(/[^A-Za-z0-9_.-]/g, '_');
@@ -78,10 +115,15 @@ async function getBrowserDescriptor() {
 }
 
 function resolveChromeFamilyBrowserDescriptor() {
+  return resolveChromeFamilyBrowser('auto', 'primary');
+}
+
+function resolveChromeFamilyBrowser(browserId = 'auto', role = 'primary') {
+  const normalizedBrowserId = normalizeChromeFamilyBrowserId(browserId);
   return makeBrowserDescriptor({
-    browserId: 'chrome',
+    browserId: descriptorChromeFamilyBrowserId(normalizedBrowserId),
     browserKind: 'chrome-family',
-    ...resolveChromeFamilyEndpoint(),
+    ...resolveChromeFamilyEndpoint(normalizedBrowserId, role),
   });
 }
 
@@ -116,28 +158,58 @@ function stableBrowserKey({ browserId, browserKind, wsUrl }) {
   return `${browserId}-${digest}`;
 }
 
-function resolveChromeFamilyEndpoint() {
+function normalizeChromeFamilyBrowserId(browserId) {
+  const normalized = String(browserId || 'auto').toLowerCase();
+  if (CHROME_FAMILY_BROWSER_IDS.has(normalized)) return normalized;
+  throw new Error(`Unsupported Chrome-family browser: ${browserId}`);
+}
+
+function descriptorChromeFamilyBrowserId(browserId) {
+  return browserId === 'auto' ? 'chrome' : browserId;
+}
+
+function resolveChromeFamilyEndpoint(browserId = 'auto', role = 'primary') {
+  const config = chromeFamilyRoleConfig(role);
   return {
-    wsUrl: chromeFamilyWsUrlFromPortFile(findChromeFamilyDevToolsPortFile()),
-    source: process.env.CDP_PORT_FILE ? 'CDP_PORT_FILE' : 'DevToolsActivePort',
+    wsUrl: readDevToolsPortFile(findChromeFamilyDevToolsPortFile(browserId, role), config.host),
+    source: config.portFile ? config.portFileEnv : 'DevToolsActivePort',
   };
 }
 
-function findChromeFamilyDevToolsPortFile() {
-  const portFile = chromeFamilyDevToolsPortCandidates().find(p => existsSync(p));
+function chromeFamilyRoleConfig(role) {
+  if (role === 'fallback') {
+    return {
+      portFile: process.env.CDP_FALLBACK_PORT_FILE,
+      portFileEnv: 'CDP_FALLBACK_PORT_FILE',
+      host: process.env.CDP_FALLBACK_HOST || '127.0.0.1',
+    };
+  }
+  return {
+    portFile: process.env.CDP_PORT_FILE,
+    portFileEnv: 'CDP_PORT_FILE',
+    host: process.env.CDP_HOST || '127.0.0.1',
+  };
+}
+
+function findChromeFamilyDevToolsPortFile(browserId = 'auto', role = 'primary') {
+  const portFile = chromeFamilyDevToolsPortCandidates(browserId, role).find(p => existsSync(p));
   if (!portFile) throw new Error('No DevToolsActivePort found. Enable remote debugging at chrome://inspect/#remote-debugging');
   return portFile;
 }
 
-function chromeFamilyDevToolsPortCandidates() {
+function chromeFamilyDevToolsPortCandidates(browserId = 'auto', role = 'primary') {
   const home = homedir();
   return [
-    process.env.CDP_PORT_FILE,
-    ...profileDevToolsPortCandidates(resolve(home, 'Library/Application Support'), CHROME_FAMILY_MAC_PROFILES),
-    ...profileDevToolsPortCandidates(resolve(home, '.config'), CHROME_FAMILY_LINUX_PROFILES),
-    ...flatpakDevToolsPortCandidates(home, CHROME_FAMILY_FLATPAK_PROFILES),
-    ...windowsDevToolsPortCandidates(home),
+    chromeFamilyRoleConfig(role).portFile,
+    ...profileDevToolsPortCandidates(resolve(home, 'Library/Application Support'), chromeFamilyProfiles(browserId, CHROME_FAMILY_MAC_PROFILES_BY_BROWSER, CHROME_FAMILY_MAC_PROFILES)),
+    ...profileDevToolsPortCandidates(resolve(home, '.config'), chromeFamilyProfiles(browserId, CHROME_FAMILY_LINUX_PROFILES_BY_BROWSER, CHROME_FAMILY_LINUX_PROFILES)),
+    ...flatpakDevToolsPortCandidates(home, chromeFamilyProfiles(browserId, CHROME_FAMILY_FLATPAK_PROFILES_BY_BROWSER, CHROME_FAMILY_FLATPAK_PROFILES)),
+    ...windowsDevToolsPortCandidates(home, browserId),
   ].filter(Boolean);
+}
+
+function chromeFamilyProfiles(browserId, profilesByBrowser, autoProfiles) {
+  return browserId === 'auto' ? autoProfiles : (profilesByBrowser[browserId] || []);
 }
 
 function profileDevToolsPortCandidates(baseDir, browsers) {
@@ -154,16 +226,16 @@ function flatpakDevToolsPortCandidates(home, browsers) {
   ]);
 }
 
-function windowsDevToolsPortCandidates(home) {
+function windowsDevToolsPortCandidates(home, browserId = 'auto') {
   if (!IS_WINDOWS) return [];
   const base = process.env.LOCALAPPDATA || resolve(home, 'AppData/Local');
-  return profileDevToolsPortCandidates(resolve(base), CHROME_FAMILY_WINDOWS_PROFILES.map(b => `${b}/User Data`));
+  const profiles = chromeFamilyProfiles(browserId, CHROME_FAMILY_WINDOWS_PROFILES_BY_BROWSER, CHROME_FAMILY_WINDOWS_PROFILES);
+  return profileDevToolsPortCandidates(resolve(base), profiles.map(b => `${b}/User Data`));
 }
 
-function chromeFamilyWsUrlFromPortFile(portFile) {
+function readDevToolsPortFile(portFile, host = '127.0.0.1') {
   const lines = readFileSync(portFile, 'utf8').trim().split('\n');
   if (lines.length < 2 || !lines[0] || !lines[1]) throw new Error(`Invalid DevToolsActivePort file: ${portFile}`);
-  const host = process.env.CDP_HOST || '127.0.0.1';
   return `ws://${host}:${lines[0]}${lines[1]}`;
 }
 
