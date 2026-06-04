@@ -1184,22 +1184,20 @@ DAEMON IPC (for advanced use / scripting)
 `;
 
 const RUNTIME_EVALUATE_METHODS = Object.freeze(['Runtime.enable', 'Runtime.evaluate']);
+const SCREENSHOT_CDP_METHODS = Object.freeze([
+  'Page.getLayoutMetrics',
+  'Emulation.getDeviceMetricsOverride',
+  ...RUNTIME_EVALUATE_METHODS,
+  'Page.captureScreenshot',
+]);
+const NAVIGATE_CDP_METHODS = Object.freeze(['Page.enable', 'Page.navigate', ...RUNTIME_EVALUATE_METHODS]);
 const COMMAND_METADATA = Object.freeze([
   commandMetadata('list', { aliases: ['ls'], cdpMethods: ['Target.getTargets'] }),
   commandMetadata('snapshot', { aliases: ['snap'], needsTarget: true, cdpMethods: ['Accessibility.getFullAXTree'] }),
   commandMetadata('eval', { needsTarget: true, cdpMethods: RUNTIME_EVALUATE_METHODS }),
-  commandMetadata('screenshot', {
-    aliases: ['shot'],
-    needsTarget: true,
-    cdpMethods: [
-      'Page.getLayoutMetrics',
-      'Emulation.getDeviceMetricsOverride',
-      ...RUNTIME_EVALUATE_METHODS,
-      'Page.captureScreenshot',
-    ],
-  }),
+  commandMetadata('screenshot', { aliases: ['shot'], needsTarget: true, cdpMethods: SCREENSHOT_CDP_METHODS }),
   commandMetadata('html', { needsTarget: true, cdpMethods: RUNTIME_EVALUATE_METHODS }),
-  commandMetadata('navigate', { aliases: ['nav'], needsTarget: true, cdpMethods: ['Page.enable', 'Page.navigate', ...RUNTIME_EVALUATE_METHODS] }),
+  commandMetadata('navigate', { aliases: ['nav'], needsTarget: true, cdpMethods: NAVIGATE_CDP_METHODS }),
   commandMetadata('network', { aliases: ['net'], needsTarget: true, cdpMethods: RUNTIME_EVALUATE_METHODS }),
   commandMetadata('click', { needsTarget: true, cdpMethods: RUNTIME_EVALUATE_METHODS }),
   commandMetadata('clickxy', { needsTarget: true, cdpMethods: ['Input.dispatchMouseEvent'] }),

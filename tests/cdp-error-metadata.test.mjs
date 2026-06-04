@@ -21,6 +21,14 @@ import { createFakeChromeCDPServer } from './support/fake-cdp.mjs';
 const TEST_DIR = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = dirname(TEST_DIR);
 const CDP_CLI = join(REPO_ROOT, 'skills/chrome-cdp/scripts/cdp.mjs');
+const RUNTIME_EVALUATE_METHODS = ['Runtime.enable', 'Runtime.evaluate'];
+const SCREENSHOT_CDP_METHODS = [
+  'Page.getLayoutMetrics',
+  'Emulation.getDeviceMetricsOverride',
+  ...RUNTIME_EVALUATE_METHODS,
+  'Page.captureScreenshot',
+];
+const NAVIGATE_CDP_METHODS = ['Page.enable', 'Page.navigate', ...RUNTIME_EVALUATE_METHODS];
 
 test('CDPError preserves protocol metadata from failed send', async () => {
   await createFakeChromeCDPServer({
@@ -117,24 +125,23 @@ test('canonical command metadata normalizes documented aliases', () => {
 });
 
 test('command metadata maps commands to CDP methods they may call', () => {
-  const runtimeEvaluateMethods = ['Runtime.enable', 'Runtime.evaluate'];
   const cases = [
     ['ls', ['Target.getTargets']],
     ['list', ['Target.getTargets']],
     ['snap', ['Accessibility.getFullAXTree']],
     ['snapshot', ['Accessibility.getFullAXTree']],
-    ['eval', runtimeEvaluateMethods],
-    ['shot', ['Page.getLayoutMetrics', 'Emulation.getDeviceMetricsOverride', ...runtimeEvaluateMethods, 'Page.captureScreenshot']],
-    ['screenshot', ['Page.getLayoutMetrics', 'Emulation.getDeviceMetricsOverride', ...runtimeEvaluateMethods, 'Page.captureScreenshot']],
-    ['html', runtimeEvaluateMethods],
-    ['nav', ['Page.enable', 'Page.navigate', ...runtimeEvaluateMethods]],
-    ['navigate', ['Page.enable', 'Page.navigate', ...runtimeEvaluateMethods]],
-    ['net', runtimeEvaluateMethods],
-    ['network', runtimeEvaluateMethods],
-    ['click', runtimeEvaluateMethods],
+    ['eval', RUNTIME_EVALUATE_METHODS],
+    ['shot', SCREENSHOT_CDP_METHODS],
+    ['screenshot', SCREENSHOT_CDP_METHODS],
+    ['html', RUNTIME_EVALUATE_METHODS],
+    ['nav', NAVIGATE_CDP_METHODS],
+    ['navigate', NAVIGATE_CDP_METHODS],
+    ['net', RUNTIME_EVALUATE_METHODS],
+    ['network', RUNTIME_EVALUATE_METHODS],
+    ['click', RUNTIME_EVALUATE_METHODS],
     ['clickxy', ['Input.dispatchMouseEvent']],
     ['type', ['Input.insertText']],
-    ['loadall', runtimeEvaluateMethods],
+    ['loadall', RUNTIME_EVALUATE_METHODS],
     ['open', ['Target.createTarget', 'Target.getTargets']],
     ['stop', []],
   ];
@@ -184,13 +191,7 @@ test('daemon responses include CDP error metadata for failed page commands', asy
       errorMethod: screenshotMethod,
       errorData: screenshotError.data,
       unsupportedMethod: screenshotMethod,
-      commandCdpMethods: [
-        'Page.getLayoutMetrics',
-        'Emulation.getDeviceMetricsOverride',
-        'Runtime.enable',
-        'Runtime.evaluate',
-        'Page.captureScreenshot',
-      ],
+      commandCdpMethods: SCREENSHOT_CDP_METHODS,
     });
   } finally {
     await ignoreFailure(runCdp(['stop', targetId], { tempDir }));

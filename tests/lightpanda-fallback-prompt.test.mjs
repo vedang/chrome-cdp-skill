@@ -15,6 +15,7 @@ const TEST_DIR = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = dirname(TEST_DIR);
 const CDP_CLI = join(REPO_ROOT, 'skills/chrome-cdp/scripts/cdp.mjs');
 const UNSUPPORTED_SHOT_METHOD = 'Page.captureScreenshot';
+const SCREENSHOT_CDP_METHODS_TEXT = 'Page.getLayoutMetrics, Emulation.getDeviceMetricsOverride, Runtime.enable, Runtime.evaluate, Page.captureScreenshot';
 
 test('unsupported Lightpanda page command emits fallback approval prompt without contacting fallback browser', async () => {
   const tempDir = await mkdtemp(join(shortTmpRoot(), 'cdp-lp-fallback-'));
@@ -120,7 +121,7 @@ function assertFallbackPrompt(result, { targetId, primaryUrl, suggestedFallback 
   assert.match(result.stderr, /Normalized command: screenshot/);
   assert.equal(result.stderr.includes(`Target: ${targetId}`), true);
   assert.match(result.stderr, /Failed CDP method: Page\.captureScreenshot \(-32601 Method not found\)/);
-  assert.match(result.stderr, /Command CDP methods: Page\.getLayoutMetrics, Emulation\.getDeviceMetricsOverride, Runtime\.enable, Runtime\.evaluate, Page\.captureScreenshot/);
+  assert.equal(result.stderr.includes(`Command CDP methods: ${SCREENSHOT_CDP_METHODS_TEXT}`), true);
   assert.equal(result.stderr.includes(`Primary URL: ${primaryUrl}`), true);
   assert.equal(result.stderr.includes(`Suggested fallback browser: ${suggestedFallback}`), true);
   assert.match(result.stderr, /did not run fallback automatically/);
