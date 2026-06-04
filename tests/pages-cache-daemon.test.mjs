@@ -139,6 +139,59 @@ test('old array-shaped pages cache fails clearly without current descriptor', as
   assert.match(result.stderr, /Run "cdp list" again\./);
 });
 
+test('daemon starts from cached page browserKey when current env cannot resolve browser', async () => {
+  const tempDir = await mkdtemp(join(shortTmpRoot(), 'cdp-dcd-'));
+  const targetId = 'dcd-target-0001';
+
+  const pageServer = await createFakeChromeCDPServer({
+    targets: [fakePage(targetId, 'Cached Daemon Page', 'https://cached-daemon.test/')],
+  }).start();
+  const decoyServer = await createFakeChromeCDPServer({
+    targets: [fakePage('decoy-target-0001', 'Decoy Page', 'https://decoy.test/')],
+  }).start();
+
+  try {
+    const portFile = join(tempDir, 'explicit/DevToolsActivePort');
+    pageServer.writeDevToolsActivePort(portFile);
+    assertCdpOk(await runCdp(['list'], {
+      tempDir,
+      env: { CDP_PORT_FILE: portFile, CDP_HOST: pageServer.host },
+    }));
+
+    const cache = await readPagesCache(tempDir);
+    const pageBrowserKey = cache.pages[0].browserKey;
+    const decoyBrowserKey = 'chrome-decoy000001';
+    await writeFile(pagesCachePath(tempDir), JSON.stringify({
+      ...cache,
+      primaryBrowserKey: decoyBrowserKey,
+      browsers: {
+        [decoyBrowserKey]: {
+          browserId: 'chrome',
+          browserKind: 'chrome-family',
+          wsUrl: decoyServer.wsUrl,
+          source: 'test-decoy',
+        },
+        [pageBrowserKey]: cache.browsers[pageBrowserKey],
+      },
+    }));
+
+    assertCdpOk(await runCdp(['eval', targetId, '99'], { tempDir }));
+
+    assert.deepEqual(commandMethods(pageServer), [
+      'Target.getTargets',
+      'Target.attachToTarget',
+      'Runtime.enable',
+      'Runtime.evaluate',
+    ]);
+    assert.equal(decoyServer.connectionLog.length, 0, 'daemon must not connect to primaryBrowserKey decoy');
+    assert.equal(decoyServer.commandLog.length, 0, 'daemon must not send commands to primaryBrowserKey decoy');
+  } finally {
+    await ignoreFailure(runCdp(['stop', targetId], { tempDir }));
+    await decoyServer.stop();
+    await pageServer.stop();
+  }
+});
+
 test('browser-aware daemon sockets separate identical target ids across backends', async () => {
   const tempDir = await mkdtemp(join(shortTmpRoot(), 'cdp-daemon-browser-key-'));
   const targetId = 'shared-target-0001';
