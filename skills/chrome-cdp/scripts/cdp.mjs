@@ -269,18 +269,15 @@ function normalizeBaseUrl(url) {
 
 async function fetchLightpandaVersion(httpBaseUrl) {
   const deadline = Date.now() + LIGHTPANDA_VERSION_RETRY_WINDOW_MS;
-  let lastError;
-  do {
+  for (;;) {
     try {
       return await fetchLightpandaVersionOnce(httpBaseUrl);
     } catch (error) {
-      lastError = error;
       const remaining = deadline - Date.now();
-      if (remaining <= 0) break;
+      if (remaining <= 0) throw error;
       await sleep(Math.min(LIGHTPANDA_VERSION_RETRY_DELAY_MS, remaining));
     }
-  } while (Date.now() <= deadline);
-  throw lastError;
+  }
 }
 
 async function fetchLightpandaVersionOnce(httpBaseUrl) {

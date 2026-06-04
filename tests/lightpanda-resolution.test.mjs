@@ -24,7 +24,7 @@ test('CDP_BROWSER=lightpanda resolves CDP_LIGHTPANDA_URL through /json/version',
     const result = await runLightpandaList(tempDir, { CDP_LIGHTPANDA_URL: server.httpUrl });
 
     assertListSucceeded(result, /Lightpanda URL Page/);
-    assert.deepEqual(requestUrls(server), ['/json/version']);
+    assertVersionRequests(server);
     assertGotTargets(server);
   });
 });
@@ -41,7 +41,7 @@ test('CDP_BROWSER=lightpanda resolves CDP_LIGHTPANDA_HOST and CDP_LIGHTPANDA_POR
     });
 
     assertListSucceeded(result, /Lightpanda Host Page/);
-    assert.deepEqual(requestUrls(server), ['/json/version']);
+    assertVersionRequests(server);
     assertGotTargets(server);
   });
 });
@@ -56,7 +56,7 @@ test('CDP_BROWSER=lightpanda retries /json/version while endpoint becomes ready'
     const result = await runLightpandaList(tempDir, { CDP_LIGHTPANDA_URL: server.httpUrl });
 
     assertListSucceeded(result, /Lightpanda Retry Page/);
-    assert.deepEqual(requestUrls(server), ['/json/version', '/json/version', '/json/version']);
+    assertVersionRequests(server, 3);
     assert.deepEqual(connectionUrls(server), [server.wsPath]);
     assertGotTargets(server);
   });
@@ -72,7 +72,7 @@ test('CDP_BROWSER=lightpanda resolves CDP_LIGHTPANDA_WS_URL directly after produ
     const result = await runLightpandaList(tempDir, { CDP_LIGHTPANDA_WS_URL: directWsUrl });
 
     assertListSucceeded(result, /Lightpanda WS Page/);
-    assert.deepEqual(requestUrls(server), ['/json/version']);
+    assertVersionRequests(server);
     assert.deepEqual(connectionUrls(server), [`${server.wsPath}?direct=1`]);
     assertGotTargets(server);
   });
@@ -95,7 +95,7 @@ test('CDP_LIGHTPANDA_WS_URL takes precedence over URL and host/port', async () =
     });
 
     assertListSucceeded(result, /Lightpanda WS Precedence Page/);
-    assert.deepEqual(requestUrls(wsServer), ['/json/version']);
+    assertVersionRequests(wsServer);
     assert.deepEqual(connectionUrls(wsServer), [`${wsServer.wsPath}?winner=ws`]);
     assertGotTargets(wsServer);
     assertNoContact(urlServer, 'CDP_LIGHTPANDA_URL loser');
@@ -118,7 +118,7 @@ test('CDP_LIGHTPANDA_URL takes precedence over host/port', async () => {
     });
 
     assertListSucceeded(result, /Lightpanda URL Precedence Page/);
-    assert.deepEqual(requestUrls(urlServer), ['/json/version']);
+    assertVersionRequests(urlServer);
     assert.deepEqual(connectionUrls(urlServer), [urlServer.wsPath]);
     assertGotTargets(urlServer);
     assertNoContact(hostPortServer, 'CDP_LIGHTPANDA_HOST/CDP_LIGHTPANDA_PORT loser');
@@ -135,7 +135,7 @@ test('CDP_BROWSER=lightpanda rejects a non-Lightpanda /json/version product', as
     assert.notEqual(result.code, 0);
     assert.match(result.stderr, /Expected Lightpanda CDP endpoint/);
     assert.match(result.stderr, /Chrome\/126\.0\.0\.0/);
-    assert.deepEqual(requestUrls(server), ['/json/version']);
+    assertVersionRequests(server);
     assert.equal(server.connectionLog.length, 0, 'product validation must fail before WebSocket connection');
   });
 });
@@ -181,6 +181,10 @@ function assertListSucceeded(result, titlePattern) {
 
 function assertGotTargets(server) {
   assert.deepEqual(commandMethods(server), ['Target.getTargets']);
+}
+
+function assertVersionRequests(server, count = 1) {
+  assert.deepEqual(requestUrls(server), Array(count).fill('/json/version'));
 }
 
 function requestUrls(server) {
