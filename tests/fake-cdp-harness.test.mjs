@@ -7,10 +7,9 @@ import {
 } from './support/fake-cdp.mjs';
 
 test('fake Chrome-family CDP server serves /json/version and Target.getTargets over WebSocket', async () => {
-  const server = await createFakeChromeCDPServer({
+  await createFakeChromeCDPServer({
     targets: [{ targetId: 'chrome-target-0001', title: 'Chrome Page', url: 'https://chrome.test/' }],
-  }).start();
-  try {
+  }).using(async (server) => {
     const version = await fetch(server.versionUrl).then((response) => response.json());
     assert.equal(version.Browser, 'Chrome/126.0.0.0');
     assert.equal(version.webSocketDebuggerUrl, server.wsUrl);
@@ -18,16 +17,13 @@ test('fake Chrome-family CDP server serves /json/version and Target.getTargets o
     const targets = await sendCdp(version.webSocketDebuggerUrl, 'Target.getTargets');
     assert.deepEqual(targets.targetInfos.map((target) => target.targetId), ['chrome-target-0001']);
     assert.equal(server.connectionLog.length, 1);
-  } finally {
-    await server.stop();
-  }
+  });
 });
 
 test('fake Lightpanda CDP server reports Lightpanda product and configurable unsupported method errors', async () => {
-  const server = await createFakeLightpandaCDPServer({
+  await createFakeLightpandaCDPServer({
     unsupportedMethods: ['Page.captureScreenshot'],
-  }).start();
-  try {
+  }).using(async (server) => {
     const version = await fetch(server.versionUrl).then((response) => response.json());
     assert.equal(version.Browser, 'Lightpanda/0.0.0');
     assert.equal(version['User-Agent'], 'Lightpanda/0.0.0');
@@ -41,9 +37,7 @@ test('fake Lightpanda CDP server reports Lightpanda product and configurable uns
     assert.match(error.message, /Method not found/);
     assert.equal(error.code, -32601);
     assert.deepEqual(error.data, { method: 'Page.captureScreenshot' });
-  } finally {
-    await server.stop();
-  }
+  });
 });
 
 function sendCdp(wsUrl, method, params = {}) {

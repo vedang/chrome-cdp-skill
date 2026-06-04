@@ -5,10 +5,16 @@ import { dirname } from 'node:path';
 import { once } from 'node:events';
 
 const DEFAULT_HOST = '127.0.0.1';
-const DEFAULT_CHROME_PRODUCT = 'Chrome/126.0.0.0';
-const DEFAULT_LIGHTPANDA_PRODUCT = 'Lightpanda/0.0.0';
-const DEFAULT_CHROME_UA = 'Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
-const DEFAULT_LIGHTPANDA_UA = 'Lightpanda/0.0.0';
+const BROWSER_DEFAULTS = {
+  'chrome-family': {
+    product: 'Chrome/126.0.0.0',
+    userAgent: 'Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+  },
+  lightpanda: {
+    product: 'Lightpanda/0.0.0',
+    userAgent: 'Lightpanda/0.0.0',
+  },
+};
 const ONE_BY_ONE_PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=';
 
 export class CDPProtocolError extends Error {
@@ -32,10 +38,9 @@ export class FakeCDPServer {
   constructor(options = {}) {
     this.host = options.host ?? DEFAULT_HOST;
     this.browserKind = options.browserKind ?? 'chrome-family';
-    this.browserProduct = options.browserProduct
-      ?? (this.browserKind === 'lightpanda' ? DEFAULT_LIGHTPANDA_PRODUCT : DEFAULT_CHROME_PRODUCT);
-    this.userAgent = options.userAgent
-      ?? (this.browserKind === 'lightpanda' ? DEFAULT_LIGHTPANDA_UA : DEFAULT_CHROME_UA);
+    const defaults = browserDefaults(this.browserKind);
+    this.browserProduct = options.browserProduct ?? defaults.product;
+    this.userAgent = options.userAgent ?? defaults.userAgent;
     this.protocolVersion = options.protocolVersion ?? '1.3';
     this.wsPath = options.wsPath ?? `/devtools/browser/${randomUUID()}`;
     this.defaultTitle = options.defaultTitle ?? 'Fake CDP Page';
@@ -163,12 +168,12 @@ export class FakeCDPServer {
       return;
     }
     if (url.pathname === '/json/list') {
-      writeJson(res, this.targets.map((target) => ({ ...target, webSocketDebuggerUrl: this.wsUrl })));
+      writeJson(res, this.targets.map((target) => targetWithDebuggerUrl(target, this.wsUrl)));
       return;
     }
     if (url.pathname === '/json/new') {
       const target = this.addTarget({ url: url.searchParams.get('url') || 'about:blank' });
-      writeJson(res, { ...target, webSocketDebuggerUrl: this.wsUrl });
+      writeJson(res, targetWithDebuggerUrl(target, this.wsUrl));
       return;
     }
     res.writeHead(404, { 'Content-Type': 'application/json' });
@@ -338,8 +343,20 @@ function defaultTarget() {
   };
 }
 
+function browserDefaults(browserKind) {
+  return BROWSER_DEFAULTS[browserKind] ?? BROWSER_DEFAULTS['chrome-family'];
+}
+
 function copyTargetInfo(target) {
-  return Object.fromEntries(Object.entries(target).filter(([, value]) => value !== undefined));
+  return withoutUndefined(target);
+}
+
+function targetWithDebuggerUrl(target, wsUrl) {
+  return { ...target, webSocketDebuggerUrl: wsUrl };
+}
+
+function withoutUndefined(object) {
+  return Object.fromEntries(Object.entries(object).filter(([, value]) => value !== undefined));
 }
 
 function writeJson(res, payload) {
@@ -353,13 +370,13 @@ function writeJson(res, payload) {
 
 function normalizeConfiguredError(method, error) {
   if (error instanceof CDPProtocolError) return error;
-  if (typeof error === 'string') return new CDPProtocolError(-32601, error, { method });
-  return new CDPProtocolError(error.code ?? -32601, error.message ?? 'Method not found', error.data ?? { method });
+  if (typeof error === 'string') return createProtocolError(method, { message: error });
+  return createProtocolError(method, error);
 }
 
 function protocolErrorPayload(error, method) {
   if (error instanceof CDPProtocolError) {
-    return Object.fromEntries(Object.entries({ code: error.code, message: error.message, data: error.data }).filter(([, value]) => value !== undefined));
+    return withoutUndefined({ code: error.code, message: error.message, data: error.data });
   }
   return { code: -32000, message: error?.message ?? `Fake CDP handler failed for ${method}` };
 }
