@@ -29,23 +29,25 @@ test('list writes browser-aware v2 pages cache with browser metadata', async () 
 
     assertCdpOk(result);
     const cache = await readPagesCache(tempDir);
-    const [page] = cache.pages;
-    const browser = cache.browsers[cache.primaryBrowserKey];
+    const browserKey = cache.primaryBrowserKey;
+    const browser = cache.browsers[browserKey];
 
     assert.equal(cache.version, 2);
-    assert.equal(cache.primaryBrowserKey, page.browserKey);
-    assert.deepEqual(Object.keys(cache.browsers), [page.browserKey]);
-    assert.equal(cache.pages.length, 1);
-    assert.equal(page.browserKey, cache.primaryBrowserKey);
-    assert.equal(page.browserId, 'lightpanda');
-    assert.equal(page.browserKind, 'lightpanda');
-    assert.equal(page.targetId, targetId);
-    assert.equal(page.title, 'Cache Metadata Page');
-    assert.equal(page.url, 'https://cache-metadata.test/');
-    assert.equal(browser.browserId, 'lightpanda');
-    assert.equal(browser.browserKind, 'lightpanda');
+    assert.deepEqual(Object.keys(cache.browsers), [browserKey]);
+    assert.deepEqual(cache.pages, [{
+      browserKey,
+      browserId: 'lightpanda',
+      browserKind: 'lightpanda',
+      targetId,
+      title: 'Cache Metadata Page',
+      url: 'https://cache-metadata.test/',
+    }]);
+    assert.deepEqual({ browserId: browser.browserId, browserKind: browser.browserKind, source: browser.source }, {
+      browserId: 'lightpanda',
+      browserKind: 'lightpanda',
+      source: 'CDP_LIGHTPANDA_URL',
+    });
     assert.match(browser.wsUrl, /^ws:\/\//);
-    assert.equal(browser.source, 'CDP_LIGHTPANDA_URL');
   });
 });
 
