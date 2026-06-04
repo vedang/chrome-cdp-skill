@@ -1275,10 +1275,6 @@ function normalizeFallbackBrowserId(value) {
   return FALLBACK_BROWSER_IDS.has(requested) ? requested : DEFAULT_FALLBACK_BROWSER_ID;
 }
 
-function fallbackBrowserSuggestion() {
-  return fallbackBrowserConfig().browserId;
-}
-
 function formatCdpErrorSummary(response) {
   const parts = [];
   if (response.errorCode != null) parts.push(String(response.errorCode));
@@ -1288,7 +1284,7 @@ function formatCdpErrorSummary(response) {
 
 function formatLightpandaFallbackPrompt({ cmd, targetPrefix, targetId, page, response }) {
   const failedMethod = response.unsupportedMethod || response.errorMethod || '<unknown>';
-  const suggestion = fallbackBrowserSuggestion();
+  const suggestion = fallbackBrowserConfig().browserId;
   const nextBrowser = suggestion || '<approved fallback browser>';
   const commandCdpMethods = response.commandCdpMethods || cdpMethodsForCommand(cmd);
   const lines = [
