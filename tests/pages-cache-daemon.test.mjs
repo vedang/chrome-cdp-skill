@@ -105,6 +105,47 @@ test('old array-shaped pages cache remains usable for page commands', async () =
   }
 });
 
+test('old array-shaped pages cache wraps entries with current primary descriptor', async () => {
+  const tempDir = await mkdtemp(join(shortTmpRoot(), 'cdp-olp-'));
+  const targetId = 'olp-target-0001';
+
+  const server = await createFakeLightpandaCDPServer({
+    targets: [fakePage(targetId, 'Old Lightpanda Cache Page', 'https://old-lightpanda-cache.test/')],
+  }).start();
+  const env = { CDP_BROWSER: 'lightpanda', CDP_LIGHTPANDA_URL: server.httpUrl };
+
+  try {
+    await writeOldPagesCache(tempDir, [fakePage(targetId, 'Old Lightpanda Cache Page', 'https://old-lightpanda-cache.test/')]);
+
+    const result = await runCdp(['eval', targetId, 'document.title'], { tempDir, env });
+
+    assertCdpOk(result);
+    assert.deepEqual(commandMethods(server), ['Target.attachToTarget', 'Runtime.enable', 'Runtime.evaluate']);
+    const migratedCache = await readPagesCache(tempDir);
+    const browserKey = migratedCache.primaryBrowserKey;
+    assert.equal(migratedCache.browsers[browserKey].browserId, 'lightpanda');
+    assert.equal(migratedCache.browsers[browserKey].browserKind, 'lightpanda');
+    assert.equal(migratedCache.pages[0].browserKey, browserKey);
+    assert.equal(migratedCache.pages[0].browserId, 'lightpanda');
+    assert.equal(migratedCache.pages[0].browserKind, 'lightpanda');
+  } finally {
+    await ignoreFailure(runCdp(['stop', targetId], { tempDir, env }));
+    await server.stop();
+  }
+});
+
+test('old array-shaped pages cache fails clearly without current descriptor', async () => {
+  const tempDir = await mkdtemp(join(shortTmpRoot(), 'cdp-old-cache-no-descriptor-'));
+  const targetId = 'old-cache-no-descriptor-target-0001';
+  await writeOldPagesCache(tempDir, [fakePage(targetId, 'Old Cache Missing Browser', 'https://old-cache-missing-browser.test/')]);
+
+  const result = await runCdp(['eval', targetId, 'document.title'], { tempDir });
+
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /Old pages cache cannot be used without current browser descriptor/);
+  assert.match(result.stderr, /Run "cdp list" again\./);
+});
+
 test('browser-aware daemon sockets separate identical target ids across backends', async () => {
   const tempDir = await mkdtemp(join(shortTmpRoot(), 'cdp-daemon-browser-key-'));
   const targetId = 'shared-target-0001';
