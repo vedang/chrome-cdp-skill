@@ -21,18 +21,11 @@ test('CDP_BROWSER=lightpanda resolves CDP_LIGHTPANDA_URL through /json/version',
   await createFakeLightpandaCDPServer({
     targets: [fakePage('lightpanda-url-0001', 'Lightpanda URL Page', 'https://lightpanda-url.test/')],
   }).using(async (server) => {
-    const result = await runCdp(['list'], {
-      tempDir,
-      env: {
-        CDP_BROWSER: 'lightpanda',
-        CDP_LIGHTPANDA_URL: server.httpUrl,
-      },
-    });
+    const result = await runLightpandaList(tempDir, { CDP_LIGHTPANDA_URL: server.httpUrl });
 
-    assert.equal(result.code, 0, result.stderr);
-    assert.match(result.stdout, /Lightpanda URL Page/);
-    assert.deepEqual(server.requestLog.map((request) => request.url), ['/json/version']);
-    assert.deepEqual(server.commandLog.map((message) => message.method), ['Target.getTargets']);
+    assertListSucceeded(result, /Lightpanda URL Page/);
+    assert.deepEqual(requestUrls(server), ['/json/version']);
+    assertGotTargets(server);
   });
 });
 
@@ -42,19 +35,14 @@ test('CDP_BROWSER=lightpanda resolves CDP_LIGHTPANDA_HOST and CDP_LIGHTPANDA_POR
   await createFakeLightpandaCDPServer({
     targets: [fakePage('lightpanda-host-0001', 'Lightpanda Host Page', 'https://lightpanda-host.test/')],
   }).using(async (server) => {
-    const result = await runCdp(['list'], {
-      tempDir,
-      env: {
-        CDP_BROWSER: 'lightpanda',
-        CDP_LIGHTPANDA_HOST: server.host,
-        CDP_LIGHTPANDA_PORT: String(server.port),
-      },
+    const result = await runLightpandaList(tempDir, {
+      CDP_LIGHTPANDA_HOST: server.host,
+      CDP_LIGHTPANDA_PORT: String(server.port),
     });
 
-    assert.equal(result.code, 0, result.stderr);
-    assert.match(result.stdout, /Lightpanda Host Page/);
-    assert.deepEqual(server.requestLog.map((request) => request.url), ['/json/version']);
-    assert.deepEqual(server.commandLog.map((message) => message.method), ['Target.getTargets']);
+    assertListSucceeded(result, /Lightpanda Host Page/);
+    assert.deepEqual(requestUrls(server), ['/json/version']);
+    assertGotTargets(server);
   });
 });
 
@@ -65,19 +53,12 @@ test('CDP_BROWSER=lightpanda resolves CDP_LIGHTPANDA_WS_URL directly after produ
     targets: [fakePage('lightpanda-ws-0001', 'Lightpanda WS Page', 'https://lightpanda-ws.test/')],
   }).using(async (server) => {
     const directWsUrl = `${server.wsUrl}?direct=1`;
-    const result = await runCdp(['list'], {
-      tempDir,
-      env: {
-        CDP_BROWSER: 'lightpanda',
-        CDP_LIGHTPANDA_WS_URL: directWsUrl,
-      },
-    });
+    const result = await runLightpandaList(tempDir, { CDP_LIGHTPANDA_WS_URL: directWsUrl });
 
-    assert.equal(result.code, 0, result.stderr);
-    assert.match(result.stdout, /Lightpanda WS Page/);
-    assert.deepEqual(server.requestLog.map((request) => request.url), ['/json/version']);
-    assert.deepEqual(server.connectionLog.map((connection) => connection.url), [`${server.wsPath}?direct=1`]);
-    assert.deepEqual(server.commandLog.map((message) => message.method), ['Target.getTargets']);
+    assertListSucceeded(result, /Lightpanda WS Page/);
+    assert.deepEqual(requestUrls(server), ['/json/version']);
+    assert.deepEqual(connectionUrls(server), [`${server.wsPath}?direct=1`]);
+    assertGotTargets(server);
   });
 });
 
@@ -85,18 +66,12 @@ test('CDP_BROWSER=lightpanda rejects a non-Lightpanda /json/version product', as
   const tempDir = await mkdtemp(join(tmpdir(), 'cdp-lightpanda-reject-'));
 
   await createFakeChromeCDPServer().using(async (server) => {
-    const result = await runCdp(['list'], {
-      tempDir,
-      env: {
-        CDP_BROWSER: 'lightpanda',
-        CDP_LIGHTPANDA_URL: server.httpUrl,
-      },
-    });
+    const result = await runLightpandaList(tempDir, { CDP_LIGHTPANDA_URL: server.httpUrl });
 
     assert.notEqual(result.code, 0);
     assert.match(result.stderr, /Expected Lightpanda CDP endpoint/);
     assert.match(result.stderr, /Chrome\/126\.0\.0\.0/);
-    assert.deepEqual(server.requestLog.map((request) => request.url), ['/json/version']);
+    assert.deepEqual(requestUrls(server), ['/json/version']);
     assert.equal(server.connectionLog.length, 0, 'product validation must fail before WebSocket connection');
   });
 });
@@ -107,23 +82,43 @@ test('CDP_LIGHTPANDA_ALLOW_NON_LIGHTPANDA=1 allows explicit non-Lightpanda endpo
   await createFakeChromeCDPServer({
     targets: [fakePage('chrome-override-0001', 'Allowed Chrome Override', 'https://chrome-override.test/')],
   }).using(async (server) => {
-    const result = await runCdp(['list'], {
-      tempDir,
-      env: {
-        CDP_BROWSER: 'lightpanda',
-        CDP_LIGHTPANDA_URL: server.httpUrl,
-        CDP_LIGHTPANDA_ALLOW_NON_LIGHTPANDA: '1',
-      },
+    const result = await runLightpandaList(tempDir, {
+      CDP_LIGHTPANDA_URL: server.httpUrl,
+      CDP_LIGHTPANDA_ALLOW_NON_LIGHTPANDA: '1',
     });
 
-    assert.equal(result.code, 0, result.stderr);
-    assert.match(result.stdout, /Allowed Chrome Override/);
-    assert.deepEqual(server.commandLog.map((message) => message.method), ['Target.getTargets']);
+    assertListSucceeded(result, /Allowed Chrome Override/);
+    assertGotTargets(server);
   });
 });
 
 function fakePage(targetId, title, url) {
   return { targetId, title, url };
+}
+
+function assertListSucceeded(result, titlePattern) {
+  assert.equal(result.code, 0, result.stderr);
+  assert.match(result.stdout, titlePattern);
+}
+
+function assertGotTargets(server) {
+  assert.deepEqual(commandMethods(server), ['Target.getTargets']);
+}
+
+function requestUrls(server) {
+  return server.requestLog.map((request) => request.url);
+}
+
+function connectionUrls(server) {
+  return server.connectionLog.map((connection) => connection.url);
+}
+
+function commandMethods(server) {
+  return server.commandLog.map((message) => message.method);
+}
+
+function runLightpandaList(tempDir, env) {
+  return runCdp(['list'], { tempDir, env: { CDP_BROWSER: 'lightpanda', ...env } });
 }
 
 function runCdp(args, { tempDir, env: overrides = {} }) {

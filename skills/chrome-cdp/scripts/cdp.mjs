@@ -95,13 +95,13 @@ function getChromeFamilyWsUrl() {
 }
 
 async function resolveLightpandaWsUrl() {
-  const directWsUrl = process.env.CDP_LIGHTPANDA_WS_URL;
-  const httpBaseUrl = directWsUrl
-    ? httpBaseUrlFromWsUrl(directWsUrl)
+  const explicitWsUrl = process.env.CDP_LIGHTPANDA_WS_URL;
+  const httpBaseUrl = explicitWsUrl
+    ? httpBaseUrlFromWsUrl(explicitWsUrl)
     : lightpandaHttpBaseUrl();
   const version = await fetchLightpandaVersion(httpBaseUrl);
   validateLightpandaVersion(version);
-  return directWsUrl || version.webSocketDebuggerUrl;
+  return explicitWsUrl || version.webSocketDebuggerUrl;
 }
 
 function lightpandaHttpBaseUrl() {
@@ -110,10 +110,7 @@ function lightpandaHttpBaseUrl() {
     if (url.protocol !== 'http:' && url.protocol !== 'https:') {
       throw new Error('CDP_LIGHTPANDA_URL must use http:// or https://');
     }
-    url.pathname = '';
-    url.search = '';
-    url.hash = '';
-    return url.toString().replace(/\/$/, '');
+    return normalizeBaseUrl(url);
   }
   const host = process.env.CDP_LIGHTPANDA_HOST || '127.0.0.1';
   const port = process.env.CDP_LIGHTPANDA_PORT || '9222';
@@ -125,6 +122,10 @@ function httpBaseUrlFromWsUrl(wsUrl) {
   if (url.protocol === 'ws:') url.protocol = 'http:';
   else if (url.protocol === 'wss:') url.protocol = 'https:';
   else throw new Error('CDP_LIGHTPANDA_WS_URL must use ws:// or wss://');
+  return normalizeBaseUrl(url);
+}
+
+function normalizeBaseUrl(url) {
   url.pathname = '';
   url.search = '';
   url.hash = '';
