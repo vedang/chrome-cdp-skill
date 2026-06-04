@@ -44,8 +44,10 @@ test('unsupported Lightpanda page command emits fallback approval prompt without
 
     await assertLightpandaPageListed(tempDir, env, /Unsupported Shot Page/);
 
-    const shot = await runCdp(['shot', targetId], { tempDir, env });
+    const commandTarget = 'lightshot';
+    const shot = await runCdp(['shot', commandTarget], { tempDir, env });
     assertFallbackPrompt(shot, {
+      commandTarget,
       targetId,
       primaryUrl: 'https://lightpanda-shot.test/workflow',
       suggestedFallback: 'brave',
@@ -145,17 +147,20 @@ function shortTmpRoot() {
   return process.platform === 'win32' ? tmpdir() : '/tmp';
 }
 
-function assertFallbackPrompt(result, { targetId, primaryUrl, suggestedFallback }) {
+function assertFallbackPrompt(result, { commandTarget, targetId, primaryUrl, suggestedFallback }) {
   assert.notEqual(result.code, 0);
   assert.equal(result.stdout, '');
-  assert.match(result.stderr, /LIGHTPANDA_UNSUPPORTED_FALLBACK_REQUIRED/);
-  assert.match(result.stderr, /Command: shot/);
-  assert.match(result.stderr, /Normalized command: screenshot/);
-  assert.equal(result.stderr.includes(`Target: ${targetId}`), true);
-  assert.match(result.stderr, /Failed CDP method: Page\.captureScreenshot \(-32601 Method not found\)/);
-  assert.equal(result.stderr.includes(`Command CDP methods: ${SCREENSHOT_CDP_METHODS_TEXT}`), true);
-  assert.equal(result.stderr.includes(`Primary URL: ${primaryUrl}`), true);
-  assert.equal(result.stderr.includes(`Suggested fallback browser: ${suggestedFallback}`), true);
+
+  const lines = result.stderr.trimEnd().split('\n');
+  assert.equal(lines[0], 'LIGHTPANDA_UNSUPPORTED_FALLBACK_REQUIRED');
+  assert.equal(lines.includes(`Command: shot ${commandTarget || targetId}`), true);
+  assert.equal(lines.includes('Normalized command: screenshot'), true);
+  assert.equal(lines.includes(`Target: ${targetId}`), true);
+  assert.equal(lines.includes('Failed CDP method: Page.captureScreenshot (-32601 Method not found)'), true);
+  assert.equal(lines.includes(`Command CDP methods: ${SCREENSHOT_CDP_METHODS_TEXT}`), true);
+  assert.equal(lines.includes(`Primary URL: ${primaryUrl}`), true);
+  assert.equal(lines.includes(`Suggested fallback browser: ${suggestedFallback}`), true);
+
   assert.match(result.stderr, /did not run fallback automatically/);
   assert.match(result.stderr, /cookies, login, localStorage, DOM mutations, typed text, JS heap, or in-page workflow may differ/);
   assert.match(result.stderr, /Ask the user before fallback execution/);
