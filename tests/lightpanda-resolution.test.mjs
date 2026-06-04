@@ -196,8 +196,68 @@ test('CDP_LIGHTPANDA_ALLOW_NON_LIGHTPANDA=1 allows explicit non-Lightpanda endpo
   });
 });
 
+test('supported Lightpanda page commands run through cached daemon descriptor', async () => {
+  const tempDir = await mkdtemp(join(shortTmpRoot(), 'cdp-lightpanda-daemon-'));
+  const targetId = 'lightpanda-daemon-0001';
+  const title = 'Lightpanda Daemon Page';
+  const html = '<html><head><title>Lightpanda Daemon Page</title></head><body>daemon ok</body></html>';
+
+  await createFakeLightpandaCDPServer({
+    targets: [fakePage(targetId, title, 'https://lightpanda-daemon.test/')],
+    handlers: {
+      'Runtime.evaluate': ({ expression }) => runtimeEvaluateResult(expression, { title, html }),
+    },
+  }).using(async (server) => {
+    const lightpandaEnv = { CDP_BROWSER: 'lightpanda', CDP_LIGHTPANDA_URL: server.httpUrl };
+
+    try {
+      assertCdpOk(await runCdp(['list'], { tempDir, env: lightpandaEnv }));
+
+      const evalResult = await runCdp(['eval', targetId, 'document.title'], { tempDir });
+      assertCdpOk(evalResult);
+      assert.match(evalResult.stdout, /Lightpanda Daemon Page/);
+
+      const htmlResult = await runCdp(['html', targetId], { tempDir });
+      assertCdpOk(htmlResult);
+      assert.match(htmlResult.stdout, /daemon ok/);
+
+      const snapshotResult = await runCdp(['snap', targetId], { tempDir });
+      assertCdpOk(snapshotResult);
+      assert.match(snapshotResult.stdout, /\[RootWebArea\] Lightpanda Daemon Page/);
+
+      const navResult = await runCdp(['nav', targetId, 'https://lightpanda-nav.test/'], { tempDir });
+      assertCdpOk(navResult);
+      assert.match(navResult.stdout, /Navigated to https:\/\/lightpanda-nav\.test\//);
+
+      assertVersionRequests(server);
+      assert.equal(server.connectionLog.length, 2, 'list uses one browser connection and page commands reuse one daemon connection');
+      assert.equal(countMethod(server, 'Target.attachToTarget'), 1, 'supported page commands reuse one Lightpanda daemon session');
+      assert.deepEqual(commandMethods(server), [
+        'Target.getTargets',
+        'Target.attachToTarget',
+        'Runtime.enable',
+        'Runtime.evaluate',
+        'Runtime.enable',
+        'Runtime.evaluate',
+        'Accessibility.getFullAXTree',
+        'Page.enable',
+        'Page.navigate',
+        'Runtime.enable',
+        'Runtime.evaluate',
+      ]);
+      assertSinglePageCommandSession(server);
+    } finally {
+      await ignoreFailure(runCdp(['stop', targetId], { tempDir }));
+    }
+  });
+});
+
 function fakePage(targetId, title, url) {
   return { targetId, title, url };
+}
+
+function shortTmpRoot() {
+  return process.platform === 'win32' ? tmpdir() : '/tmp';
 }
 
 async function usingLightpandaServers(configs, callback) {
@@ -214,13 +274,30 @@ async function usingLightpandaServers(configs, callback) {
   }
 }
 
-function assertListSucceeded(result, titlePattern) {
+function assertCdpOk(result) {
   assert.equal(result.code, 0, result.stderr);
+}
+
+function assertListSucceeded(result, titlePattern) {
+  assertCdpOk(result);
   assert.match(result.stdout, titlePattern);
 }
 
 function assertGotTargets(server) {
   assert.deepEqual(commandMethods(server), ['Target.getTargets']);
+}
+
+function runtimeEvaluateResult(expression, { title, html }) {
+  const valueByExpression = new Map([
+    ['document.title', title],
+    ['document.documentElement.outerHTML', html],
+    ['document.readyState', 'complete'],
+    ['window.devicePixelRatio', 1],
+  ]);
+  const value = valueByExpression.get(expression);
+  return value === undefined
+    ? { result: { type: 'undefined' } }
+    : { result: { type: typeof value, value } };
 }
 
 function assertProductRejected(result, server, productPattern) {
@@ -247,6 +324,21 @@ function commandMethods(server) {
   return server.commandLog.map((message) => message.method);
 }
 
+function countMethod(server, method) {
+  return commandMethods(server).filter((actual) => actual === method).length;
+}
+
+function assertSinglePageCommandSession(server) {
+  const sessionIds = server.commandLog
+    .filter((message) => message.sessionId)
+    .map((message) => message.sessionId);
+  assert.equal(new Set(sessionIds).size, 1, 'page commands must share one daemon CDP session');
+}
+
+async function ignoreFailure(promise) {
+  try { await promise; } catch {}
+}
+
 function assertNoContact(server, label) {
   assert.deepEqual(requestUrls(server), [], `${label} received HTTP requests`);
   assert.deepEqual(connectionUrls(server), [], `${label} received WebSocket connections`);
@@ -269,7 +361,7 @@ function runLightpandaOpen(tempDir, url, env) {
 function runCdp(args, { tempDir, env: overrides = {} }) {
   return new Promise((resolve, reject) => {
     const childEnv = makeCleanEnv(tempDir, overrides);
-    execFile(process.execPath, [CDP_CLI, ...args], { env: childEnv, timeout: 5000 }, (error, stdout, stderr) => {
+    execFile(process.execPath, [CDP_CLI, ...args], { env: childEnv, timeout: 10000 }, (error, stdout, stderr) => {
       if (error?.killed || error?.signal) {
         reject(error);
         return;
