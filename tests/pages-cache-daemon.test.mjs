@@ -220,7 +220,7 @@ test('stop old array-shaped pages cache uses legacy target socket without browse
 
   try {
     assertCdpOk(await runCdp(['stop', targetId], { tempDir }));
-    assert.deepEqual(await waitFor(daemon.commands, 1000, 'legacy daemon did not receive stop'), ['stop']);
+    assert.equal(await waitFor(daemon.command, 1000, 'legacy daemon did not receive stop'), 'stop');
   } finally {
     await daemon.close();
   }
@@ -267,12 +267,11 @@ async function createFakeLegacyDaemonSocket(tempDir, targetId) {
   const socketPath = daemonSocketPath(tempDir, targetId);
   await mkdir(dirname(socketPath), { recursive: true });
 
-  let resolveCommands;
-  let rejectCommands;
-  const commands = [];
+  let resolveCommand;
+  let rejectCommand;
   const commandPromise = new Promise((resolve, reject) => {
-    resolveCommands = resolve;
-    rejectCommands = reject;
+    resolveCommand = resolve;
+    rejectCommand = reject;
   });
 
   const server = createServer((conn) => {
@@ -285,11 +284,10 @@ async function createFakeLegacyDaemonSocket(tempDir, targetId) {
         if (!line.trim()) continue;
         try {
           const request = JSON.parse(line);
-          commands.push(request.cmd);
           conn.end(JSON.stringify({ id: request.id, ok: true, result: '' }) + '\n');
-          resolveCommands([...commands]);
+          resolveCommand(request.cmd);
         } catch (error) {
-          rejectCommands(error);
+          rejectCommand(error);
         }
       }
     });
@@ -304,7 +302,7 @@ async function createFakeLegacyDaemonSocket(tempDir, targetId) {
   });
 
   return {
-    commands: commandPromise,
+    command: commandPromise,
     close: () => new Promise((resolve) => server.close(() => resolve())),
   };
 }
