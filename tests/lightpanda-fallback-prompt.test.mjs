@@ -16,6 +16,7 @@ const REPO_ROOT = dirname(TEST_DIR);
 const CDP_CLI = join(REPO_ROOT, 'skills/chrome-cdp/scripts/cdp.mjs');
 const UNSUPPORTED_SHOT_METHOD = 'Page.captureScreenshot';
 const SCREENSHOT_CDP_METHODS_TEXT = 'Page.getLayoutMetrics, Emulation.getDeviceMetricsOverride, Runtime.enable, Runtime.evaluate, Page.captureScreenshot';
+const STATE_DIVERGENCE_WARNING = 'Fallback browser is not the same state: it may lack cookies, login, local storage (localStorage), DOM mutations, typed text, JS heap, or current user workflow.';
 
 test('unsupported Lightpanda page command emits fallback approval prompt without contacting fallback browser', async () => {
   const tempDir = await mkdtemp(join(shortTmpRoot(), 'cdp-lp-fallback-'));
@@ -160,10 +161,10 @@ function assertFallbackPrompt(result, { commandTarget, targetId, primaryUrl, sug
     `Command CDP methods: ${SCREENSHOT_CDP_METHODS_TEXT}`,
     `Primary URL: ${primaryUrl}`,
     `Suggested fallback browser: ${suggestedFallback}`,
+    STATE_DIVERGENCE_WARNING,
   ]);
 
   assert.match(result.stderr, /did not run fallback automatically/);
-  assert.match(result.stderr, /cookies, login, localStorage, DOM mutations, typed text, JS heap, or in-page workflow may differ/);
   assert.match(result.stderr, /Ask the user before fallback execution/);
 }
 

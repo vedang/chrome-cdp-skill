@@ -1302,7 +1302,7 @@ function formatLightpandaFallbackPrompt({ cmd, targetPrefix, targetId, page, res
   lines.push(
     '',
     'Lightpanda does not support this operation. chrome-cdp did not run fallback automatically.',
-    'Fallback browser may not have the same state: cookies, login, localStorage, DOM mutations, typed text, JS heap, or in-page workflow may differ.',
+    'Fallback browser is not the same state: it may lack cookies, login, local storage (localStorage), DOM mutations, typed text, JS heap, or current user workflow.',
     '',
     `Ask the user before fallback execution. If approved, enable remote debugging in the fallback browser, run cdp list/open there, then rerun this command with CDP_BROWSER=${nextBrowser}.`,
   );
