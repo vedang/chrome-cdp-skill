@@ -53,10 +53,6 @@ function socketPathsForPage(page) {
   return [...new Set([sockPath(page.browserKey, page.targetId), legacySockPath(page.targetId)])];
 }
 
-async function getWsUrl() {
-  return (await getBrowserDescriptor()).wsUrl;
-}
-
 async function getBrowserDescriptor() {
   if ((process.env.CDP_BROWSER || '').toLowerCase() === 'lightpanda') {
     return resolveLightpandaBrowserDescriptor();
@@ -74,18 +70,16 @@ function resolveChromeFamilyBrowserDescriptor() {
 }
 
 async function resolveLightpandaBrowserDescriptor() {
+  let source = 'CDP_LIGHTPANDA_HOST/CDP_LIGHTPANDA_PORT';
+  if (process.env.CDP_LIGHTPANDA_WS_URL) source = 'CDP_LIGHTPANDA_WS_URL';
+  else if (process.env.CDP_LIGHTPANDA_URL) source = 'CDP_LIGHTPANDA_URL';
+
   return makeBrowserDescriptor({
     browserId: 'lightpanda',
     browserKind: 'lightpanda',
     wsUrl: await resolveLightpandaWsUrl(),
-    source: lightpandaSourceDescription(),
+    source,
   });
-}
-
-function lightpandaSourceDescription() {
-  if (process.env.CDP_LIGHTPANDA_WS_URL) return 'CDP_LIGHTPANDA_WS_URL';
-  if (process.env.CDP_LIGHTPANDA_URL) return 'CDP_LIGHTPANDA_URL';
-  return 'CDP_LIGHTPANDA_HOST/CDP_LIGHTPANDA_PORT';
 }
 
 function makeBrowserDescriptor(descriptor) {
@@ -304,7 +298,7 @@ function normalizePagesCache(raw, currentDescriptor) {
   const pages = Array.isArray(raw.pages) ? raw.pages : [];
   const normalizedPages = pages.map(page => {
     const browserKey = page.browserKey || primaryBrowserKey || currentDescriptor?.browserKey;
-    const browser = browsers[browserKey] || (currentDescriptor?.browserKey === browserKey ? currentDescriptor : {}) || {};
+    const browser = browsers[browserKey] || (currentDescriptor?.browserKey === browserKey ? currentDescriptor : {});
     return {
       browserKey,
       browserId: page.browserId || browser.browserId || 'chrome',
@@ -773,14 +767,11 @@ async function evalRawStr(cdp, sid, method, paramsJson) {
 // ---------------------------------------------------------------------------
 
 async function runDaemon(browserKey, targetId) {
-  let descriptor;
-  if (!targetId) {
-    targetId = browserKey;
-    descriptor = await getBrowserDescriptor();
-    browserKey = descriptor.browserKey;
-  } else {
-    descriptor = getCachedBrowserDescriptor(browserKey);
+  if (!browserKey || !targetId) {
+    process.stderr.write('Daemon: missing browser key or target id\n');
+    process.exit(1);
   }
+  const descriptor = getCachedBrowserDescriptor(browserKey);
   const sp = sockPath(browserKey, targetId);
 
   const cdp = new CDP();
@@ -1003,14 +994,16 @@ async function stopDaemons(targetPrefix) {
     : cache.pages;
 
   for (const page of pages) {
-    for (const sp of socketPathsForPage(page)) {
-      try {
-        const conn = await connectToSocket(sp);
-        await sendCommand(conn, { cmd: 'stop' });
-      } catch {
-        if (!IS_WINDOWS) try { unlinkSync(sp); } catch {}
-      }
-    }
+    await Promise.all(socketPathsForPage(page).map(stopSocket));
+  }
+}
+
+async function stopSocket(sp) {
+  try {
+    const conn = await connectToSocket(sp);
+    await sendCommand(conn, { cmd: 'stop' });
+  } catch {
+    if (!IS_WINDOWS) try { unlinkSync(sp); } catch {}
   }
 }
 

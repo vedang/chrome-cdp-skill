@@ -27,16 +27,19 @@ test('list writes browser-aware v2 pages cache with browser metadata', async () 
       env: { CDP_BROWSER: 'lightpanda', CDP_LIGHTPANDA_URL: server.httpUrl },
     });
 
-    assert.equal(result.code, 0, result.stderr);
+    assertCdpOk(result);
     const cache = await readPagesCache(tempDir);
+    const [page] = cache.pages;
+    const browser = cache.browsers[cache.primaryBrowserKey];
+
     assert.equal(cache.version, 2);
     assert.equal(cache.pages.length, 1);
-    assert.equal(cache.pages[0].targetId, targetId);
-    assert.equal(cache.pages[0].browserId, 'lightpanda');
-    assert.equal(cache.pages[0].browserKind, 'lightpanda');
-    assert.equal(cache.pages[0].browserKey, cache.primaryBrowserKey);
-    assert.equal(cache.browsers[cache.primaryBrowserKey].browserKind, 'lightpanda');
-    assert.match(cache.browsers[cache.primaryBrowserKey].wsUrl, /^ws:\/\//);
+    assert.equal(page.targetId, targetId);
+    assert.equal(page.browserId, 'lightpanda');
+    assert.equal(page.browserKind, 'lightpanda');
+    assert.equal(page.browserKey, cache.primaryBrowserKey);
+    assert.equal(browser.browserKind, 'lightpanda');
+    assert.match(browser.wsUrl, /^ws:\/\//);
   });
 });
 
@@ -58,16 +61,16 @@ test('old array-shaped pages cache remains usable for page commands', async () =
       env: { CDP_PORT_FILE: portFile, CDP_HOST: server.host },
     });
 
-    assert.equal(result.code, 0, result.stderr);
+    assertCdpOk(result);
     assert.deepEqual(commandMethods(server), ['Target.attachToTarget', 'Runtime.enable', 'Runtime.evaluate']);
     const migratedCache = await readPagesCache(tempDir);
     assert.equal(migratedCache.version, 2);
     assert.equal(migratedCache.pages[0].browserKind, 'chrome-family');
   } finally {
-    await runCdp(['stop', targetId], {
+    await ignoreFailure(runCdp(['stop', targetId], {
       tempDir,
       env: { CDP_PORT_FILE: join(tempDir, 'chrome/DevToolsActivePort'), CDP_HOST: server.host },
-    }).catch(() => {});
+    }));
     await server.stop();
   }
 });
@@ -89,24 +92,30 @@ test('browser-aware daemon sockets separate identical target ids across backends
   const chromeEnv = { CDP_PORT_FILE: chromePortFile, CDP_HOST: chrome.host };
 
   try {
-    assert.equal((await runCdp(['list'], { tempDir, env: lightpandaEnv })).code, 0);
-    assert.equal((await runCdp(['eval', targetId, '1'], { tempDir, env: lightpandaEnv })).code, 0);
+    assertCdpOk(await runCdp(['list'], { tempDir, env: lightpandaEnv }));
+    assertCdpOk(await runCdp(['eval', targetId, '1'], { tempDir, env: lightpandaEnv }));
 
-    assert.equal((await runCdp(['list'], { tempDir, env: chromeEnv })).code, 0);
-    const chromeEval = await runCdp(['eval', targetId, '2'], { tempDir, env: chromeEnv });
-
-    assert.equal(chromeEval.code, 0, chromeEval.stderr);
+    assertCdpOk(await runCdp(['list'], { tempDir, env: chromeEnv }));
+    assertCdpOk(await runCdp(['eval', targetId, '2'], { tempDir, env: chromeEnv }));
     assert.equal(countMethod(lightpanda, 'Runtime.evaluate'), 1, 'Chrome eval must not reuse Lightpanda daemon socket');
     assert.equal(countMethod(chrome, 'Runtime.evaluate'), 1, 'Chrome eval must run in Chrome daemon');
     assert.equal(countMethod(chrome, 'Target.attachToTarget'), 1, 'Chrome daemon must attach to Chrome target');
   } finally {
-    await runCdp(['stop', targetId], { tempDir, env: chromeEnv }).catch(() => {});
-    await runCdp(['list'], { tempDir, env: lightpandaEnv }).catch(() => {});
-    await runCdp(['stop', targetId], { tempDir, env: lightpandaEnv }).catch(() => {});
+    await ignoreFailure(runCdp(['stop', targetId], { tempDir, env: chromeEnv }));
+    await ignoreFailure(runCdp(['list'], { tempDir, env: lightpandaEnv }));
+    await ignoreFailure(runCdp(['stop', targetId], { tempDir, env: lightpandaEnv }));
     await chrome.stop();
     await lightpanda.stop();
   }
 });
+
+function assertCdpOk(result) {
+  assert.equal(result.code, 0, result.stderr);
+}
+
+async function ignoreFailure(promise) {
+  try { await promise; } catch {}
+}
 
 function fakePage(targetId, title, url) {
   return { targetId, title, url };
