@@ -29,6 +29,7 @@ const RUNTIME_DIR = IS_WINDOWS
     : resolve(homedir(), '.cache', 'cdp');
 try { mkdirSync(RUNTIME_DIR, { recursive: true, mode: 0o700 }); } catch {}
 const PAGES_CACHE = resolve(RUNTIME_DIR, 'pages.json');
+const PAGES_CACHE_VERSION = 2;
 const CHROME_FAMILY_BROWSER_IDS = new Set(['auto', 'chrome', 'chromium', 'brave', 'edge', 'vivaldi']);
 const SUPPORTED_CDP_BROWSER_VALUES = [...CHROME_FAMILY_BROWSER_IDS, 'lightpanda'].join(', ');
 const CHROME_FAMILY_PROFILE_ORDER = {
@@ -326,7 +327,7 @@ function cachePageRecord(page, descriptor) {
 
 function makePagesCache(descriptor, pages) {
   return {
-    version: 2,
+    version: PAGES_CACHE_VERSION,
     primaryBrowserKey: descriptor.browserKey,
     browsers: { [descriptor.browserKey]: cacheBrowserDescriptor(descriptor) },
     pages: pages.map(page => cachePageRecord(page, descriptor)),
@@ -338,7 +339,7 @@ function writePagesCache(descriptor, pages) {
 }
 
 function writePagesCacheObject(cache) {
-  writeFileSync(PAGES_CACHE, JSON.stringify(cache), { mode: 0o600 });
+  writeFileSync(PAGES_CACHE, JSON.stringify(normalizePagesCache(cache)), { mode: 0o600 });
 }
 
 function readRawPagesCache() {
@@ -381,7 +382,7 @@ function normalizePagesCache(raw, currentDescriptor) {
     };
   }).filter(page => page.targetId && page.browserKey);
 
-  return { version: 2, primaryBrowserKey, browsers, pages: normalizedPages };
+  return { version: PAGES_CACHE_VERSION, primaryBrowserKey, browsers, pages: normalizedPages };
 }
 
 function readPagesCache(currentDescriptor) {
