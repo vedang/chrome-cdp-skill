@@ -69,20 +69,12 @@ test('unsupported Lightpanda exits before resolving configured fallback browser'
   }).start();
 
   try {
-    const env = {
-      ...makeLightpandaEnv(lightpanda),
-      CDP_FALLBACK_BROWSER: 'chrome',
-      CDP_FALLBACK_PORT_FILE: join(tempDir, 'missing/DevToolsActivePort'),
-      CDP_FALLBACK_HOST: '127.0.0.250',
-    };
-
+    const env = missingFallbackResolverEnv(tempDir, lightpanda);
     await assertLightpandaPageListed(tempDir, env, /No Fallback Resolve Page/);
 
     const shot = await runCdp(['shot', targetId], { tempDir, env });
-    assert.equal(shot.code, 1, shot.stderr);
-    assert.equal(shot.stdout, '');
-    assert.match(shot.stderr, /LIGHTPANDA_UNSUPPORTED_FALLBACK_REQUIRED/);
-    assert.doesNotMatch(shot.stderr, /No DevToolsActivePort found|ECONNREFUSED|Daemon failed to start/);
+    assertFallbackPrompt(shot, { targetId, primaryUrl, suggestedFallback: 'chrome' });
+    assertNoFallbackResolverError(shot);
   } finally {
     await stopLightpandaDaemon(tempDir, targetId, lightpanda);
     await lightpanda.stop();
@@ -130,6 +122,15 @@ function makeLightpandaEnv(lightpanda) {
   return { CDP_BROWSER: 'lightpanda', CDP_LIGHTPANDA_URL: lightpanda.httpUrl };
 }
 
+function missingFallbackResolverEnv(tempDir, lightpanda) {
+  return {
+    ...makeLightpandaEnv(lightpanda),
+    CDP_FALLBACK_BROWSER: 'chrome',
+    CDP_FALLBACK_PORT_FILE: join(tempDir, 'missing/DevToolsActivePort'),
+    CDP_FALLBACK_HOST: '127.0.0.250',
+  };
+}
+
 async function assertLightpandaPageListed(tempDir, env, titlePattern) {
   const list = await runCdp(['list'], { tempDir, env });
   assert.equal(list.code, 0, list.stderr);
@@ -164,6 +165,10 @@ function assertFallbackUntouched(server) {
   assert.equal(server.requestLog.length, 0, 'fallback /json endpoints must not be requested');
   assert.equal(server.connectionLog.length, 0, 'fallback WebSocket must not be opened');
   assert.equal(server.commandLog.length, 0, 'fallback CDP commands must not run');
+}
+
+function assertNoFallbackResolverError(result) {
+  assert.doesNotMatch(result.stderr, /No DevToolsActivePort found|ECONNREFUSED|Daemon failed to start/);
 }
 
 function runCdp(args, { tempDir, env: overrides = {} }) {
