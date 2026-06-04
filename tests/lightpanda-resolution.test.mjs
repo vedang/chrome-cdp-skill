@@ -46,6 +46,22 @@ test('CDP_BROWSER=lightpanda resolves CDP_LIGHTPANDA_HOST and CDP_LIGHTPANDA_POR
   });
 });
 
+test('CDP_BROWSER=lightpanda retries /json/version while endpoint becomes ready', async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), 'cdp-lightpanda-version-retry-'));
+
+  await createFakeLightpandaCDPServer({
+    versionFailures: 2,
+    targets: [fakePage('lightpanda-retry-0001', 'Lightpanda Retry Page', 'https://lightpanda-retry.test/')],
+  }).using(async (server) => {
+    const result = await runLightpandaList(tempDir, { CDP_LIGHTPANDA_URL: server.httpUrl });
+
+    assertListSucceeded(result, /Lightpanda Retry Page/);
+    assert.deepEqual(requestUrls(server), ['/json/version', '/json/version', '/json/version']);
+    assert.deepEqual(connectionUrls(server), [server.wsPath]);
+    assertGotTargets(server);
+  });
+});
+
 test('CDP_BROWSER=lightpanda resolves CDP_LIGHTPANDA_WS_URL directly after product validation', async () => {
   const tempDir = await mkdtemp(join(tmpdir(), 'cdp-lightpanda-ws-url-'));
 

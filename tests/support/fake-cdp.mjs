@@ -51,6 +51,7 @@ export class FakeCDPServer {
     this.#handlers = new Map(Object.entries(options.handlers ?? {}));
     this.#methodErrors = new Map(Object.entries(options.methodErrors ?? {}));
     this.#unsupportedMethods = new Set(options.unsupportedMethods ?? []);
+    this.#versionFailuresRemaining = options.versionFailures ?? 0;
     this.#targets = new Map();
     this.#sessions = new Map();
     for (const target of options.targets ?? [defaultTarget()]) {
@@ -65,6 +66,7 @@ export class FakeCDPServer {
   #handlers;
   #methodErrors;
   #unsupportedMethods;
+  #versionFailuresRemaining;
   #nextTarget = 1;
   #nextSession = 1;
 
@@ -164,6 +166,11 @@ export class FakeCDPServer {
     this.requestLog.push({ method: req.method, url: req.url });
     const url = new URL(req.url, this.httpUrl);
     if (url.pathname === '/json/version') {
+      if (this.#versionFailuresRemaining > 0) {
+        this.#versionFailuresRemaining--;
+        writeJson(res, { error: 'Lightpanda is starting' }, 503);
+        return;
+      }
       writeJson(res, this.versionPayload());
       return;
     }
@@ -359,9 +366,9 @@ function withoutUndefined(object) {
   return Object.fromEntries(Object.entries(object).filter(([, value]) => value !== undefined));
 }
 
-function writeJson(res, payload) {
+function writeJson(res, payload, status = 200) {
   const body = JSON.stringify(payload);
-  res.writeHead(200, {
+  res.writeHead(status, {
     'Content-Type': 'application/json',
     'Content-Length': Buffer.byteLength(body),
   });

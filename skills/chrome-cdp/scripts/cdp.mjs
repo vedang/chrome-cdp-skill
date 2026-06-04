@@ -19,6 +19,9 @@ const NAVIGATION_TIMEOUT = 30000;
 const IDLE_TIMEOUT = 20 * 60 * 1000;
 const DAEMON_CONNECT_RETRIES = 20;
 const DAEMON_CONNECT_DELAY = 300;
+const LIGHTPANDA_VERSION_RETRY_WINDOW_MS = 2000;
+const LIGHTPANDA_VERSION_RETRY_DELAY_MS = 100;
+const LIGHTPANDA_VERSION_FETCH_TIMEOUT_MS = 500;
 const MIN_TARGET_PREFIX_LEN = 8;
 const IS_WINDOWS = process.platform === 'win32';
 if (!IS_WINDOWS) process.umask(0o077);
@@ -265,7 +268,30 @@ function normalizeBaseUrl(url) {
 }
 
 async function fetchLightpandaVersion(httpBaseUrl) {
-  const response = await fetch(`${httpBaseUrl}/json/version`);
+  const deadline = Date.now() + LIGHTPANDA_VERSION_RETRY_WINDOW_MS;
+  let lastError;
+  do {
+    try {
+      return await fetchLightpandaVersionOnce(httpBaseUrl);
+    } catch (error) {
+      lastError = error;
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) break;
+      await sleep(Math.min(LIGHTPANDA_VERSION_RETRY_DELAY_MS, remaining));
+    }
+  } while (Date.now() <= deadline);
+  throw lastError;
+}
+
+async function fetchLightpandaVersionOnce(httpBaseUrl) {
+  let response;
+  try {
+    response = await fetch(`${httpBaseUrl}/json/version`, {
+      signal: AbortSignal.timeout(LIGHTPANDA_VERSION_FETCH_TIMEOUT_MS),
+    });
+  } catch (error) {
+    throw new Error(`Lightpanda /json/version failed: ${error.message}`);
+  }
   if (!response.ok) throw new Error(`Lightpanda /json/version failed: HTTP ${response.status}`);
   const version = await response.json();
   if (!version.webSocketDebuggerUrl) throw new Error('Lightpanda /json/version missing webSocketDebuggerUrl');
