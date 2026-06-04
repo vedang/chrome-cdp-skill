@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -62,6 +62,63 @@ test('CDP_BROWSER=lightpanda resolves CDP_LIGHTPANDA_WS_URL directly after produ
   });
 });
 
+test('CDP_LIGHTPANDA_WS_URL takes precedence over URL and host/port', async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), 'cdp-lightpanda-ws-precedence-'));
+  const wsServer = await createFakeLightpandaCDPServer({
+    targets: [fakePage('lightpanda-ws-precedence-0001', 'Lightpanda WS Precedence Page', 'https://lightpanda-ws-precedence.test/')],
+  }).start();
+  const urlServer = await createFakeLightpandaCDPServer().start();
+  const hostPortServer = await createFakeLightpandaCDPServer().start();
+
+  try {
+    const directWsUrl = `${wsServer.wsUrl}?winner=ws`;
+    const result = await runLightpandaList(tempDir, {
+      CDP_LIGHTPANDA_WS_URL: directWsUrl,
+      CDP_LIGHTPANDA_URL: urlServer.httpUrl,
+      CDP_LIGHTPANDA_HOST: hostPortServer.host,
+      CDP_LIGHTPANDA_PORT: String(hostPortServer.port),
+    });
+
+    assertListSucceeded(result, /Lightpanda WS Precedence Page/);
+    assert.deepEqual(requestUrls(wsServer), ['/json/version']);
+    assert.deepEqual(connectionUrls(wsServer), [`${wsServer.wsPath}?winner=ws`]);
+    assertGotTargets(wsServer);
+    assertNoContact(urlServer, 'CDP_LIGHTPANDA_URL loser');
+    assertNoContact(hostPortServer, 'CDP_LIGHTPANDA_HOST/CDP_LIGHTPANDA_PORT loser');
+    assert.equal(await primaryBrowserSource(tempDir), 'CDP_LIGHTPANDA_WS_URL');
+  } finally {
+    await hostPortServer.stop();
+    await urlServer.stop();
+    await wsServer.stop();
+  }
+});
+
+test('CDP_LIGHTPANDA_URL takes precedence over host/port', async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), 'cdp-lightpanda-url-precedence-'));
+  const urlServer = await createFakeLightpandaCDPServer({
+    targets: [fakePage('lightpanda-url-precedence-0001', 'Lightpanda URL Precedence Page', 'https://lightpanda-url-precedence.test/')],
+  }).start();
+  const hostPortServer = await createFakeLightpandaCDPServer().start();
+
+  try {
+    const result = await runLightpandaList(tempDir, {
+      CDP_LIGHTPANDA_URL: urlServer.httpUrl,
+      CDP_LIGHTPANDA_HOST: hostPortServer.host,
+      CDP_LIGHTPANDA_PORT: String(hostPortServer.port),
+    });
+
+    assertListSucceeded(result, /Lightpanda URL Precedence Page/);
+    assert.deepEqual(requestUrls(urlServer), ['/json/version']);
+    assert.deepEqual(connectionUrls(urlServer), [urlServer.wsPath]);
+    assertGotTargets(urlServer);
+    assertNoContact(hostPortServer, 'CDP_LIGHTPANDA_HOST/CDP_LIGHTPANDA_PORT loser');
+    assert.equal(await primaryBrowserSource(tempDir), 'CDP_LIGHTPANDA_URL');
+  } finally {
+    await hostPortServer.stop();
+    await urlServer.stop();
+  }
+});
+
 test('CDP_BROWSER=lightpanda rejects a non-Lightpanda /json/version product', async () => {
   const tempDir = await mkdtemp(join(tmpdir(), 'cdp-lightpanda-reject-'));
 
@@ -115,6 +172,17 @@ function connectionUrls(server) {
 
 function commandMethods(server) {
   return server.commandLog.map((message) => message.method);
+}
+
+function assertNoContact(server, label) {
+  assert.deepEqual(requestUrls(server), [], `${label} received HTTP requests`);
+  assert.deepEqual(connectionUrls(server), [], `${label} received WebSocket connections`);
+  assert.deepEqual(commandMethods(server), [], `${label} received CDP commands`);
+}
+
+async function primaryBrowserSource(tempDir) {
+  const cache = JSON.parse(await readFile(join(tempDir, 'runtime/cdp/pages.json'), 'utf8'));
+  return cache.browsers[cache.primaryBrowserKey].source;
 }
 
 function runLightpandaList(tempDir, env) {

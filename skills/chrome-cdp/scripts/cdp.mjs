@@ -91,7 +91,7 @@ function socketPathsForPage(page) {
 
 async function getBrowserDescriptor() {
   const browserId = primaryBrowserId();
-  if (browserId === 'lightpanda') return resolveLightpandaBrowserDescriptor();
+  if (browserId === 'lightpanda') return resolveLightpandaBrowser();
   if (CHROME_FAMILY_BROWSER_IDS.has(browserId)) return resolveChromeFamilyBrowser(browserId, 'primary');
   throw new Error(`Unsupported CDP_BROWSER: ${process.env.CDP_BROWSER}. Expected ${SUPPORTED_CDP_BROWSER_VALUES}.`);
 }
@@ -109,7 +109,7 @@ function resolveChromeFamilyBrowser(browserId = 'auto', role = 'primary') {
   });
 }
 
-async function resolveLightpandaBrowserDescriptor() {
+async function resolveLightpandaBrowser() {
   let source = 'CDP_LIGHTPANDA_HOST/CDP_LIGHTPANDA_PORT';
   if (process.env.CDP_LIGHTPANDA_WS_URL) source = 'CDP_LIGHTPANDA_WS_URL';
   else if (process.env.CDP_LIGHTPANDA_URL) source = 'CDP_LIGHTPANDA_URL';
