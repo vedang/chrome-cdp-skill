@@ -158,14 +158,12 @@ test('browser-aware daemon sockets separate identical target ids across backends
   try {
     assertCdpOk(await runCdp(['list'], { tempDir, env: lightpandaEnv }));
     assertCdpOk(await runCdp(['eval', targetId, '1'], { tempDir, env: lightpandaEnv }));
-    const lightpandaCache = await readPagesCache(tempDir);
-    await assertDaemonSocketExists(tempDir, lightpandaCache.primaryBrowserKey, targetId);
+    await assertCurrentDaemonSocketExists(tempDir, targetId);
 
     assertCdpOk(await runCdp(['list'], { tempDir, env: chromeEnv }));
     assertCdpOk(await runCdp(['eval', targetId, '2'], { tempDir, env: chromeEnv }));
-    const chromeCache = await readPagesCache(tempDir);
-    await assertDaemonSocketExists(tempDir, chromeCache.primaryBrowserKey, targetId);
-    await assertNoLegacyDaemonSocket(tempDir, targetId);
+    await assertCurrentDaemonSocketExists(tempDir, targetId);
+    await assertLegacyDaemonSocketAbsent(tempDir, targetId);
     assert.equal(countMethod(lightpanda, 'Runtime.evaluate'), 1, 'Chrome eval must not reuse Lightpanda daemon socket');
     assert.equal(countMethod(chrome, 'Runtime.evaluate'), 1, 'Chrome eval must run in Chrome daemon');
     assert.equal(countMethod(chrome, 'Target.attachToTarget'), 1, 'Chrome daemon must attach to Chrome target');
@@ -198,22 +196,19 @@ function assertMigratedPageBrowser(cache, { browserId, browserKind }) {
   }
 }
 
-async function assertDaemonSocketExists(tempDir, browserKey, targetId) {
+async function assertCurrentDaemonSocketExists(tempDir, targetId) {
   if (process.platform === 'win32') return;
-  await access(daemonSocketPath(tempDir, browserKey, targetId));
+  const cache = await readPagesCache(tempDir);
+  await access(daemonSocketPath(tempDir, cache.primaryBrowserKey, targetId));
 }
 
-async function assertNoLegacyDaemonSocket(tempDir, targetId) {
+async function assertLegacyDaemonSocketAbsent(tempDir, targetId) {
   if (process.platform === 'win32') return;
-  await assert.rejects(access(legacyDaemonSocketPath(tempDir, targetId)), { code: 'ENOENT' });
+  await assert.rejects(access(daemonSocketPath(tempDir, targetId)), { code: 'ENOENT' });
 }
 
-function daemonSocketPath(tempDir, browserKey, targetId) {
-  return join(tempDir, 'runtime/cdp', `cdp-${safeSocketPart(browserKey)}-${safeSocketPart(targetId)}.sock`);
-}
-
-function legacyDaemonSocketPath(tempDir, targetId) {
-  return join(tempDir, 'runtime/cdp', `cdp-${safeSocketPart(targetId)}.sock`);
+function daemonSocketPath(tempDir, ...parts) {
+  return join(tempDir, 'runtime/cdp', `cdp-${parts.map(safeSocketPart).join('-')}.sock`);
 }
 
 function safeSocketPart(value) {
