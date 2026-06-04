@@ -61,11 +61,12 @@ async function getBrowserDescriptor() {
 }
 
 function resolveChromeFamilyBrowserDescriptor() {
+  const endpoint = resolveChromeFamilyEndpoint();
   return makeBrowserDescriptor({
     browserId: 'chrome',
     browserKind: 'chrome-family',
-    wsUrl: getChromeFamilyWsUrl(),
-    source: process.env.CDP_PORT_FILE ? 'CDP_PORT_FILE' : 'DevToolsActivePort',
+    wsUrl: endpoint.wsUrl,
+    source: endpoint.source,
   });
 }
 
@@ -100,20 +101,30 @@ function stableBrowserKey({ browserId, browserKind, wsUrl }) {
   return `${browserId}-${digest}`;
 }
 
-function getChromeFamilyWsUrl() {
+function resolveChromeFamilyEndpoint() {
+  return {
+    wsUrl: chromeFamilyWsUrlFromPortFile(findChromeFamilyDevToolsPortFile()),
+    source: process.env.CDP_PORT_FILE ? 'CDP_PORT_FILE' : 'DevToolsActivePort',
+  };
+}
+
+function findChromeFamilyDevToolsPortFile() {
+  const portFile = chromeFamilyDevToolsPortCandidates().find(p => existsSync(p));
+  if (!portFile) throw new Error('No DevToolsActivePort found. Enable remote debugging at chrome://inspect/#remote-debugging');
+  return portFile;
+}
+
+function chromeFamilyDevToolsPortCandidates() {
   const home = homedir();
-  // macOS: ~/Library/Application Support/<name>/DevToolsActivePort
   const macBrowsers = [
     'Google/Chrome', 'Google/Chrome Beta', 'Google/Chrome for Testing',
     'Chromium', 'BraveSoftware/Brave-Browser', 'Microsoft Edge',
   ];
-  // Linux: ~/.config/<name>/DevToolsActivePort
   const linuxBrowsers = [
     'google-chrome', 'google-chrome-beta', 'chromium',
     'vivaldi', 'vivaldi-snapshot',
     'BraveSoftware/Brave-Browser', 'microsoft-edge',
   ];
-  // Linux Flatpak: ~/.var/app/<app-id>/config/<name>/DevToolsActivePort
   const flatpakBrowsers = [
     ['org.chromium.Chromium', 'chromium'],
     ['com.google.Chrome', 'google-chrome'],
@@ -121,31 +132,40 @@ function getChromeFamilyWsUrl() {
     ['com.microsoft.Edge', 'microsoft-edge'],
     ['com.vivaldi.Vivaldi', 'vivaldi'],
   ];
-  const candidates = [
+
+  return [
     process.env.CDP_PORT_FILE,
-    ...macBrowsers.flatMap(b => [
-      resolve(home, 'Library/Application Support', b, 'DevToolsActivePort'),
-      resolve(home, 'Library/Application Support', b, 'Default/DevToolsActivePort'),
-    ]),
-    ...linuxBrowsers.flatMap(b => [
-      resolve(home, '.config', b, 'DevToolsActivePort'),
-      resolve(home, '.config', b, 'Default/DevToolsActivePort'),
-    ]),
-    ...flatpakBrowsers.flatMap(([appId, name]) => [
-      resolve(home, '.var/app', appId, 'config', name, 'DevToolsActivePort'),
-      resolve(home, '.var/app', appId, 'config', name, 'Default/DevToolsActivePort'),
-    ]),
-    // Windows: %LOCALAPPDATA%/<name>/User Data/DevToolsActivePort
-    ...(IS_WINDOWS ? ['Google/Chrome', 'BraveSoftware/Brave-Browser', 'Microsoft/Edge'].flatMap(b => {
-      const base = process.env.LOCALAPPDATA || resolve(home, 'AppData/Local');
-      return [
-        resolve(base, b, 'User Data/DevToolsActivePort'),
-        resolve(base, b, 'User Data/Default/DevToolsActivePort'),
-      ];
-    }) : []),
+    ...profileDevToolsPortCandidates(resolve(home, 'Library/Application Support'), macBrowsers),
+    ...profileDevToolsPortCandidates(resolve(home, '.config'), linuxBrowsers),
+    ...flatpakDevToolsPortCandidates(home, flatpakBrowsers),
+    ...windowsDevToolsPortCandidates(home),
   ].filter(Boolean);
-  const portFile = candidates.find(p => existsSync(p));
-  if (!portFile) throw new Error('No DevToolsActivePort found. Enable remote debugging at chrome://inspect/#remote-debugging');
+}
+
+function profileDevToolsPortCandidates(baseDir, browsers) {
+  return browsers.flatMap(b => [
+    resolve(baseDir, b, 'DevToolsActivePort'),
+    resolve(baseDir, b, 'Default/DevToolsActivePort'),
+  ]);
+}
+
+function flatpakDevToolsPortCandidates(home, browsers) {
+  return browsers.flatMap(([appId, name]) => [
+    resolve(home, '.var/app', appId, 'config', name, 'DevToolsActivePort'),
+    resolve(home, '.var/app', appId, 'config', name, 'Default/DevToolsActivePort'),
+  ]);
+}
+
+function windowsDevToolsPortCandidates(home) {
+  if (!IS_WINDOWS) return [];
+  const base = process.env.LOCALAPPDATA || resolve(home, 'AppData/Local');
+  return ['Google/Chrome', 'BraveSoftware/Brave-Browser', 'Microsoft/Edge'].flatMap(b => [
+    resolve(base, b, 'User Data/DevToolsActivePort'),
+    resolve(base, b, 'User Data/Default/DevToolsActivePort'),
+  ]);
+}
+
+function chromeFamilyWsUrlFromPortFile(portFile) {
   const lines = readFileSync(portFile, 'utf8').trim().split('\n');
   if (lines.length < 2 || !lines[0] || !lines[1]) throw new Error(`Invalid DevToolsActivePort file: ${portFile}`);
   const host = process.env.CDP_HOST || '127.0.0.1';
