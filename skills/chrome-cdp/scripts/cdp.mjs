@@ -573,14 +573,13 @@ export function isUnsupportedCdpError(error) {
 }
 
 function unsupportedCdpMessageCandidates(error) {
-  const candidates = [error.message];
-  if (typeof error.data === 'string') candidates.push(error.data);
-  else if (error.data && typeof error.data === 'object') candidates.push(error.data.message, error.data.error);
-  return candidates.map(normalizeUnsupportedCdpMessage).filter(Boolean);
-}
-
-function normalizeUnsupportedCdpMessage(value) {
-  return typeof value === 'string' ? value.trim().toLowerCase() : '';
+  const dataMessages = typeof error.data === 'string'
+    ? [error.data]
+    : [error.data?.message, error.data?.error];
+  return [error.message, ...dataMessages]
+    .filter(value => typeof value === 'string')
+    .map(value => value.trim().toLowerCase())
+    .filter(Boolean);
 }
 
 function formatErrorData(data) {

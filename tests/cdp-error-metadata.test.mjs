@@ -54,44 +54,37 @@ test('CDPError preserves protocol metadata from failed send', async () => {
 });
 
 test('unsupported classifier accepts only missing-method codes or exact known strings', () => {
-  const missingMethodByCode = new CDPError('Page.captureScreenshot', {
-    code: -32601,
-    message: 'Unexpected protocol text',
-  });
-  assert.equal(isUnsupportedCdpError(missingMethodByCode), true);
+  assertUnsupported({ code: -32601, message: 'Unexpected protocol text' });
 
   for (const message of ['Method not found', 'Unknown method', 'not implemented', 'unsupported']) {
-    const exactKnownString = new CDPError('Page.captureScreenshot', { code: -32000, message });
-    assert.equal(isUnsupportedCdpError(exactKnownString), true, message);
+    assertUnsupported({ message });
   }
 
-  assert.equal(isUnsupportedCdpError(new CDPError('Page.captureScreenshot', {
-    code: -32000,
-    message: 'Protocol error',
-    data: 'unsupported',
-  })), true);
-  assert.equal(isUnsupportedCdpError(new CDPError('Page.captureScreenshot', {
-    code: -32000,
-    message: 'Protocol error',
-    data: { message: 'Unknown method' },
-  })), true);
+  assertUnsupported({ message: 'Protocol error', data: 'unsupported' });
+  assertUnsupported({ message: 'Protocol error', data: { message: 'Unknown method' } });
 
   for (const message of [
     'Navigation failed: site reports unsupported browser',
     'Method not found while loading app route',
     'The requested feature is not implemented by this page',
   ]) {
-    const genericPageError = new CDPError('Page.navigate', { code: -32000, message });
-    assert.equal(isUnsupportedCdpError(genericPageError), false, message);
+    assertSupported({ method: 'Page.navigate', message });
   }
 
-  const dataOnlySubstring = new CDPError('Runtime.evaluate', {
-    code: -32000,
+  assertSupported({
+    method: 'Runtime.evaluate',
     message: 'Evaluation failed',
     data: { details: 'User clicked unsupported workflow option' },
   });
-  assert.equal(isUnsupportedCdpError(dataOnlySubstring), false);
 });
+
+function assertUnsupported({ method = 'Page.captureScreenshot', code = -32000, message, data }) {
+  assert.equal(isUnsupportedCdpError(new CDPError(method, { code, message, data })), true, message);
+}
+
+function assertSupported({ method = 'Page.captureScreenshot', code = -32000, message, data }) {
+  assert.equal(isUnsupportedCdpError(new CDPError(method, { code, message, data })), false, message);
+}
 
 test('daemon responses include CDP error metadata for failed page commands', async () => {
   const tempDir = await mkdtemp(join(shortTmpRoot(), 'cdp-daemon-error-metadata-'));
