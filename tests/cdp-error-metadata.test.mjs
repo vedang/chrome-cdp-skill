@@ -12,6 +12,7 @@ import {
   CDP,
   CDPError,
   canonicalCommandName,
+  cdpMethodsForCommand,
   commandMetadataFor,
   isUnsupportedCdpError,
 } from '../skills/chrome-cdp/scripts/cdp.mjs';
@@ -115,6 +116,37 @@ test('canonical command metadata normalizes documented aliases', () => {
   });
 });
 
+test('command metadata maps commands to CDP methods they may call', () => {
+  const runtimeEvaluateMethods = ['Runtime.enable', 'Runtime.evaluate'];
+  const cases = [
+    ['ls', ['Target.getTargets']],
+    ['list', ['Target.getTargets']],
+    ['snap', ['Accessibility.getFullAXTree']],
+    ['snapshot', ['Accessibility.getFullAXTree']],
+    ['eval', runtimeEvaluateMethods],
+    ['shot', ['Page.getLayoutMetrics', 'Emulation.getDeviceMetricsOverride', ...runtimeEvaluateMethods, 'Page.captureScreenshot']],
+    ['screenshot', ['Page.getLayoutMetrics', 'Emulation.getDeviceMetricsOverride', ...runtimeEvaluateMethods, 'Page.captureScreenshot']],
+    ['html', runtimeEvaluateMethods],
+    ['nav', ['Page.enable', 'Page.navigate', ...runtimeEvaluateMethods]],
+    ['navigate', ['Page.enable', 'Page.navigate', ...runtimeEvaluateMethods]],
+    ['net', runtimeEvaluateMethods],
+    ['network', runtimeEvaluateMethods],
+    ['click', runtimeEvaluateMethods],
+    ['clickxy', ['Input.dispatchMouseEvent']],
+    ['type', ['Input.insertText']],
+    ['loadall', runtimeEvaluateMethods],
+    ['open', ['Target.createTarget', 'Target.getTargets']],
+    ['stop', []],
+  ];
+
+  for (const [cmd, methods] of cases) {
+    assert.deepEqual(cdpMethodsForCommand(cmd), methods, cmd);
+  }
+
+  assert.deepEqual(cdpMethodsForCommand('evalraw', ['DOM.getDocument', '{}']), ['DOM.getDocument']);
+  assert.deepEqual(cdpMethodsForCommand('evalraw'), []);
+});
+
 test('daemon responses include CDP error metadata for failed page commands', async () => {
   const tempDir = await mkdtemp(join(shortTmpRoot(), 'cdp-daemon-error-metadata-'));
   const targetId = 'daemon-error-target-0001';
@@ -152,6 +184,13 @@ test('daemon responses include CDP error metadata for failed page commands', asy
       errorMethod: screenshotMethod,
       errorData: screenshotError.data,
       unsupportedMethod: screenshotMethod,
+      commandCdpMethods: [
+        'Page.getLayoutMetrics',
+        'Emulation.getDeviceMetricsOverride',
+        'Runtime.enable',
+        'Runtime.evaluate',
+        'Page.captureScreenshot',
+      ],
     });
   } finally {
     await ignoreFailure(runCdp(['stop', targetId], { tempDir }));

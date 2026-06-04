@@ -120,6 +120,7 @@ function assertFallbackPrompt(result, { targetId, primaryUrl, suggestedFallback 
   assert.match(result.stderr, /Normalized command: screenshot/);
   assert.equal(result.stderr.includes(`Target: ${targetId}`), true);
   assert.match(result.stderr, /Failed CDP method: Page\.captureScreenshot \(-32601 Method not found\)/);
+  assert.match(result.stderr, /Command CDP methods: Page\.getLayoutMetrics, Emulation\.getDeviceMetricsOverride, Runtime\.enable, Runtime\.evaluate, Page\.captureScreenshot/);
   assert.equal(result.stderr.includes(`Primary URL: ${primaryUrl}`), true);
   assert.equal(result.stderr.includes(`Suggested fallback browser: ${suggestedFallback}`), true);
   assert.match(result.stderr, /did not run fallback automatically/);

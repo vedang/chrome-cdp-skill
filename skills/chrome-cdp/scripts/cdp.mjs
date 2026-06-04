@@ -589,8 +589,10 @@ function formatErrorData(data) {
   catch { return String(data); }
 }
 
-function commandErrorResponse(error) {
+function commandErrorResponse(error, { commandName, args = [] } = {}) {
   const response = { ok: false, error: error.message };
+  const commandCdpMethods = cdpMethodsForCommand(commandName, args);
+  if (commandCdpMethods.length) response.commandCdpMethods = commandCdpMethods;
   if (error instanceof CDPError) {
     response.errorCode = error.code;
     response.errorMethod = error.method;
@@ -969,7 +971,7 @@ async function runDaemon(browserKey, targetId) {
       }
       return { ok: true, result: result ?? '' };
     } catch (e) {
-      return commandErrorResponse(e);
+      return commandErrorResponse(e, { commandName, args });
     }
   }
 
@@ -1181,20 +1183,30 @@ DAEMON IPC (for advanced use / scripting)
   The socket disappears after 20 min of inactivity or when the tab closes.
 `;
 
+const RUNTIME_EVALUATE_METHODS = Object.freeze(['Runtime.enable', 'Runtime.evaluate']);
 const COMMAND_METADATA = Object.freeze([
-  commandMetadata('list', { aliases: ['ls'] }),
-  commandMetadata('snapshot', { aliases: ['snap'], needsTarget: true }),
-  commandMetadata('eval', { needsTarget: true }),
-  commandMetadata('screenshot', { aliases: ['shot'], needsTarget: true }),
-  commandMetadata('html', { needsTarget: true }),
-  commandMetadata('navigate', { aliases: ['nav'], needsTarget: true }),
-  commandMetadata('network', { aliases: ['net'], needsTarget: true }),
-  commandMetadata('click', { needsTarget: true }),
-  commandMetadata('clickxy', { needsTarget: true }),
-  commandMetadata('type', { needsTarget: true }),
-  commandMetadata('loadall', { needsTarget: true }),
+  commandMetadata('list', { aliases: ['ls'], cdpMethods: ['Target.getTargets'] }),
+  commandMetadata('snapshot', { aliases: ['snap'], needsTarget: true, cdpMethods: ['Accessibility.getFullAXTree'] }),
+  commandMetadata('eval', { needsTarget: true, cdpMethods: RUNTIME_EVALUATE_METHODS }),
+  commandMetadata('screenshot', {
+    aliases: ['shot'],
+    needsTarget: true,
+    cdpMethods: [
+      'Page.getLayoutMetrics',
+      'Emulation.getDeviceMetricsOverride',
+      ...RUNTIME_EVALUATE_METHODS,
+      'Page.captureScreenshot',
+    ],
+  }),
+  commandMetadata('html', { needsTarget: true, cdpMethods: RUNTIME_EVALUATE_METHODS }),
+  commandMetadata('navigate', { aliases: ['nav'], needsTarget: true, cdpMethods: ['Page.enable', 'Page.navigate', ...RUNTIME_EVALUATE_METHODS] }),
+  commandMetadata('network', { aliases: ['net'], needsTarget: true, cdpMethods: RUNTIME_EVALUATE_METHODS }),
+  commandMetadata('click', { needsTarget: true, cdpMethods: RUNTIME_EVALUATE_METHODS }),
+  commandMetadata('clickxy', { needsTarget: true, cdpMethods: ['Input.dispatchMouseEvent'] }),
+  commandMetadata('type', { needsTarget: true, cdpMethods: ['Input.insertText'] }),
+  commandMetadata('loadall', { needsTarget: true, cdpMethods: RUNTIME_EVALUATE_METHODS }),
   commandMetadata('evalraw', { needsTarget: true }),
-  commandMetadata('open'),
+  commandMetadata('open', { cdpMethods: ['Target.createTarget', 'Target.getTargets'] }),
   commandMetadata('stop'),
 ]);
 const COMMAND_METADATA_BY_NAME = new Map(
@@ -1202,8 +1214,13 @@ const COMMAND_METADATA_BY_NAME = new Map(
 );
 const FALLBACK_BROWSER_IDS = new Set(['chrome', 'chromium', 'brave', 'edge', 'vivaldi']);
 
-function commandMetadata(canonicalName, { aliases = [], needsTarget = false } = {}) {
-  return Object.freeze({ canonicalName, aliases: Object.freeze([...aliases]), needsTarget });
+function commandMetadata(canonicalName, { aliases = [], needsTarget = false, cdpMethods = [] } = {}) {
+  return Object.freeze({
+    canonicalName,
+    aliases: Object.freeze([...aliases]),
+    needsTarget,
+    cdpMethods: Object.freeze([...cdpMethods]),
+  });
 }
 
 function commandDefinitionFor(cmd) {
@@ -1222,6 +1239,12 @@ export function commandMetadataFor(cmd) {
 
 export function canonicalCommandName(cmd) {
   return commandDefinitionFor(cmd)?.canonicalName || cmd;
+}
+
+export function cdpMethodsForCommand(cmd, args = []) {
+  const commandName = canonicalCommandName(cmd);
+  if (commandName === 'evalraw') return args[0] ? [args[0]] : [];
+  return [...(commandDefinitionFor(commandName)?.cdpMethods || [])];
 }
 
 function commandNeedsTarget(cmd) {
@@ -1249,6 +1272,7 @@ function formatLightpandaFallbackPrompt({ cmd, targetPrefix, targetId, page, res
   const failedMethod = response.unsupportedMethod || response.errorMethod || '<unknown>';
   const suggestion = fallbackBrowserSuggestion();
   const nextBrowser = suggestion || '<approved fallback browser>';
+  const commandCdpMethods = response.commandCdpMethods || cdpMethodsForCommand(cmd);
   const lines = [
     'LIGHTPANDA_UNSUPPORTED_FALLBACK_REQUIRED',
     `Command: ${[cmd, targetPrefix].filter(Boolean).join(' ')}`,
@@ -1258,6 +1282,7 @@ function formatLightpandaFallbackPrompt({ cmd, targetPrefix, targetId, page, res
     `Primary browser: ${page?.browserId || 'lightpanda'}`,
     `Primary URL: ${page?.url || '<unknown>'}`,
   ];
+  if (commandCdpMethods.length) lines.push(`Command CDP methods: ${commandCdpMethods.join(', ')}`);
   if (response.errorData != null) lines.push(`CDP error data: ${formatErrorData(response.errorData)}`);
   if (suggestion) lines.push(`Suggested fallback browser: ${suggestion}`);
   lines.push(
