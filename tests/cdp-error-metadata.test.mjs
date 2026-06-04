@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { CDP, CDPError } from '../skills/chrome-cdp/scripts/cdp.mjs';
+import { CDP, CDPError, isUnsupportedCdpError } from '../skills/chrome-cdp/scripts/cdp.mjs';
 import { createFakeChromeCDPServer } from './support/fake-cdp.mjs';
 
 const TEST_DIR = dirname(fileURLToPath(import.meta.url));
@@ -51,6 +51,46 @@ test('CDPError preserves protocol metadata from failed send', async () => {
       cdp.close();
     }
   });
+});
+
+test('unsupported classifier accepts only missing-method codes or exact known strings', () => {
+  const missingMethodByCode = new CDPError('Page.captureScreenshot', {
+    code: -32601,
+    message: 'Unexpected protocol text',
+  });
+  assert.equal(isUnsupportedCdpError(missingMethodByCode), true);
+
+  for (const message of ['Method not found', 'Unknown method', 'not implemented', 'unsupported']) {
+    const exactKnownString = new CDPError('Page.captureScreenshot', { code: -32000, message });
+    assert.equal(isUnsupportedCdpError(exactKnownString), true, message);
+  }
+
+  assert.equal(isUnsupportedCdpError(new CDPError('Page.captureScreenshot', {
+    code: -32000,
+    message: 'Protocol error',
+    data: 'unsupported',
+  })), true);
+  assert.equal(isUnsupportedCdpError(new CDPError('Page.captureScreenshot', {
+    code: -32000,
+    message: 'Protocol error',
+    data: { message: 'Unknown method' },
+  })), true);
+
+  for (const message of [
+    'Navigation failed: site reports unsupported browser',
+    'Method not found while loading app route',
+    'The requested feature is not implemented by this page',
+  ]) {
+    const genericPageError = new CDPError('Page.navigate', { code: -32000, message });
+    assert.equal(isUnsupportedCdpError(genericPageError), false, message);
+  }
+
+  const dataOnlySubstring = new CDPError('Runtime.evaluate', {
+    code: -32000,
+    message: 'Evaluation failed',
+    data: { details: 'User clicked unsupported workflow option' },
+  });
+  assert.equal(isUnsupportedCdpError(dataOnlySubstring), false);
 });
 
 test('daemon responses include CDP error metadata for failed page commands', async () => {

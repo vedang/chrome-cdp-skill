@@ -559,18 +559,28 @@ export class CDP {
   close() { this.#ws.close(); }
 }
 
-const UNSUPPORTED_CDP_ERROR_PATTERNS = [
+const UNSUPPORTED_CDP_ERROR_MESSAGES = new Set([
   'method not found',
   'unknown method',
   'not implemented',
   'unsupported',
-];
+]);
 
-function isUnsupportedCdpError(error) {
+export function isUnsupportedCdpError(error) {
   if (!(error instanceof CDPError)) return false;
   if (error.code === -32601) return true;
-  const text = [error.message, formatErrorData(error.data)].filter(Boolean).join(' ').toLowerCase();
-  return UNSUPPORTED_CDP_ERROR_PATTERNS.some(pattern => text.includes(pattern));
+  return unsupportedCdpMessageCandidates(error).some(message => UNSUPPORTED_CDP_ERROR_MESSAGES.has(message));
+}
+
+function unsupportedCdpMessageCandidates(error) {
+  const candidates = [error.message];
+  if (typeof error.data === 'string') candidates.push(error.data);
+  else if (error.data && typeof error.data === 'object') candidates.push(error.data.message, error.data.error);
+  return candidates.map(normalizeUnsupportedCdpMessage).filter(Boolean);
+}
+
+function normalizeUnsupportedCdpMessage(value) {
+  return typeof value === 'string' ? value.trim().toLowerCase() : '';
 }
 
 function formatErrorData(data) {
