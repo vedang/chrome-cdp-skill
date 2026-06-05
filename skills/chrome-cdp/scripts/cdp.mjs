@@ -1282,6 +1282,17 @@ function formatCdpErrorSummary(response) {
   return parts.length ? ` (${parts.join(' ')})` : '';
 }
 
+function manualLightpandaFallbackSteps(browserId) {
+  return [
+    'Manual fallback only:',
+    '1. Ask the user before fallback execution.',
+    '2. If approved, enable remote debugging in the fallback browser.',
+    `3. Run CDP_BROWSER=${browserId} scripts/cdp.mjs list or open in that browser.`,
+    '4. Select the fallback browser target; do not reuse the Lightpanda target id.',
+    `5. Rerun this command with CDP_BROWSER=${browserId} against the approved fallback target.`,
+  ];
+}
+
 function formatLightpandaFallbackPrompt({ cmd, targetPrefix, targetId, page, response }) {
   const failedMethod = response.unsupportedMethod || response.errorMethod || '<unknown>';
   const suggestion = fallbackBrowserConfig().browserId;
@@ -1304,12 +1315,7 @@ function formatLightpandaFallbackPrompt({ cmd, targetPrefix, targetId, page, res
     'Lightpanda does not support this operation. chrome-cdp did not run fallback automatically.',
     LIGHTPANDA_FALLBACK_STATE_WARNING,
     '',
-    'Manual fallback only:',
-    '1. Ask the user before fallback execution.',
-    '2. If approved, enable remote debugging in the fallback browser.',
-    `3. Run CDP_BROWSER=${nextBrowser} scripts/cdp.mjs list or open in that browser.`,
-    '4. Select the fallback browser target; do not reuse the Lightpanda target id.',
-    `5. Rerun this command with CDP_BROWSER=${nextBrowser} against the approved fallback target.`,
+    ...manualLightpandaFallbackSteps(nextBrowser),
   );
   return lines.join('\n');
 }

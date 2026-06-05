@@ -16,6 +16,7 @@ const REPO_ROOT = dirname(TEST_DIR);
 const CDP_CLI = join(REPO_ROOT, 'skills/chrome-cdp/scripts/cdp.mjs');
 const UNSUPPORTED_SHOT_METHOD = 'Page.captureScreenshot';
 const SCREENSHOT_CDP_METHODS_TEXT = 'Page.getLayoutMetrics, Emulation.getDeviceMetricsOverride, Runtime.enable, Runtime.evaluate, Page.captureScreenshot';
+const NO_AUTO_FALLBACK_MESSAGE = 'Lightpanda does not support this operation. chrome-cdp did not run fallback automatically.';
 const STATE_DIVERGENCE_WARNING = 'Fallback browser is not the same state: it may lack cookies, login, local storage (localStorage), DOM mutations, typed text, JS heap, or current user workflow.';
 function manualFallbackSequence(browserId) {
   const nextBrowser = browserId || '<approved fallback browser>';
@@ -195,11 +196,10 @@ function assertFallbackPrompt(result, { commandTarget, targetId, primaryUrl, sug
     `Command CDP methods: ${SCREENSHOT_CDP_METHODS_TEXT}`,
     `Primary URL: ${primaryUrl}`,
     ...(suggestedFallback ? [`Suggested fallback browser: ${suggestedFallback}`] : []),
+    NO_AUTO_FALLBACK_MESSAGE,
     STATE_DIVERGENCE_WARNING,
     ...manualFallbackSequence(suggestedFallback),
   ]);
-
-  assert.match(result.stderr, /did not run fallback automatically/);
 }
 
 function assertPromptLines(stderr, requiredLines) {
