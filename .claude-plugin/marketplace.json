@@ -1,0 +1,18 @@
+{
+  "name": "chrome-cdp-skill",
+  "owner": {
+    "name": "Petr Baudis",
+    "url": "https://github.com/pasky"
+  },
+  "metadata": {
+    "description": "Live Chrome tab access for coding agents via the Chrome DevTools Protocol."
+  },
+  "plugins": [
+    {
+      "name": "chrome-cdp",
+      "source": "./",
+      "description": "Inspect and interact with live local Chrome tabs (screenshots, accessibility tree, JS eval, clicks, navigation) without re-login. Requires Node 22+ and Chrome remote debugging.",
+      "category": "browser"
+    }
+  ]
+}

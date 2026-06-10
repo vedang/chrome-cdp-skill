@@ -1,0 +1,10 @@
+{
+  "name": "chrome-cdp",
+  "description": "Give the agent access to your live Chrome session — open tabs, logged-in accounts, current page state — via the Chrome DevTools Protocol.",
+  "author": {
+    "name": "Petr Baudis",
+    "url": "https://github.com/pasky"
+  },
+  "homepage": "https://github.com/pasky/chrome-cdp-skill",
+  "license": "MIT"
+}
